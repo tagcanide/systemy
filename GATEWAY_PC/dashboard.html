@@ -240,9 +240,14 @@
           <div class="field"><label for="sync-key">Chave de API web</label><input id="sync-key" name="sync-key" class="input mono" required spellcheck="false" placeholder="Chave pública do app web…"></div>
           <div class="field"><label for="sync-email">E-mail do transmissor</label><input id="sync-email" name="sync-email" type="email" class="input" required autocomplete="username" spellcheck="false" placeholder="transmissor@…"></div>
           <div class="field"><label for="sync-password">Senha</label><input id="sync-password" name="sync-password" type="password" class="input" required autocomplete="current-password" placeholder="Senha da conta do transmissor…"></div>
-          <div class="btn-row"><button type="submit" id="sync-connect" class="btn btn--block">Conectar transmissor</button><button type="button" id="sync-disconnect" class="btn btn--ghost btn--block">Desligar</button></div>
+          <label class="check" for="sync-remember"><input type="checkbox" id="sync-remember" checked><span>Manter conectado neste computador</span></label>
+          <button type="submit" id="sync-connect" class="btn btn--block">Conectar transmissor</button>
         </form>
-        <p class="fine">A senha fica só na memória do gateway. A chave de API web é pública; a proteção vem da conta autorizada e das regras do banco. Sem internet, a recepção e a gravação local continuam.</p>
+        <div id="sync-connected" class="hidden">
+          <p class="note">Conectado como <strong id="sync-account" class="mono">—</strong>. <span id="sync-auto"></span></p>
+          <button type="button" id="sync-disconnect" class="btn btn--ghost btn--block">Desconectar e esquecer</button>
+        </div>
+        <p class="fine">A senha não é gravada. Com a opção marcada, o gateway guarda só o token de renovação do Firebase em %LOCALAPPDATA%\CANIDE, fora do OneDrive e do repositório, e se reconecta sozinho ao iniciar. Sem internet, a recepção e a gravação local continuam.</p>
         <p id="sync-message" class="msg" role="status"></p>
       </section>
       <section class="panel" aria-labelledby="h-counters">

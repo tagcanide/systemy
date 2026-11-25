@@ -62,6 +62,8 @@ class FakeFirebase(http.server.BaseHTTPRequestHandler):
                 return self._send(400, {"error": {"message": "INVALID_LOGIN_CREDENTIALS"}})
             return self._send(200, {"idToken": "tok-1", "refreshToken": "ref-1", "expiresIn": "3600", "localId": "uid-tx"})
         if "/token" in self.path:
+            if dict(urllib.parse.parse_qsl(raw.decode())).get("refresh_token", "")[:4] != "ref-":
+                return self._send(400, {"error": {"message": "INVALID_REFRESH_TOKEN"}})
             return self._send(200, {"id_token": "tok-2", "refresh_token": "ref-2", "expires_in": "3600", "user_id": "uid-tx"})
         self._send(404, {})
 
@@ -126,7 +128,8 @@ class SyncTests(unittest.TestCase):
         FakeFirebase.patches = []
         self.tmp = tempfile.TemporaryDirectory()
         self.antenna = {"source": "rx_serial", "state": "ok", "ageS": 0.4, "hasSample": True}
-        self.s = sync.FirebaseSync(Path(self.tmp.name), "20261124T120000_abcdef", lambda: dict(self.antenna))
+        self.cred = Path(self.tmp.name) / "cred" / "transmissor.json"
+        self.s = sync.FirebaseSync(Path(self.tmp.name), "20261124T120000_abcdef", lambda: dict(self.antenna), self.cred)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -341,7 +344,7 @@ class SyncTests(unittest.TestCase):
     def test_restart_restores_open_trajectory(self):
         self.s.start()
         sid = self.s.status()["trajectory"]["id"]
-        again = sync.FirebaseSync(Path(self.tmp.name), "20261124T130000_fedcba", lambda: dict(self.antenna))
+        again = sync.FirebaseSync(Path(self.tmp.name), "20261124T130000_fedcba", lambda: dict(self.antenna), self.cred)
         self.assertEqual(again.status()["trajectory"]["id"], sid)
         self.assertEqual(again.status()["trajectory"]["gatewaySession"], "20261124T130000_fedcba")
 
@@ -354,6 +357,54 @@ class SyncTests(unittest.TestCase):
             self.s.on_sample(sample(i, 1_790_000_000_000 + i))
         self.assertLess(time.perf_counter() - t0, 1.0)
         self.assertGreaterEqual(self.s.status()["pending"], 2000)
+
+    # ---------------------------------------------------------------- conexão lembrada
+    def test_remembered_connection_reconnects_without_password(self):
+        out = self.connect()
+        self.assertIn("lembrado", out["message"])
+        saved = self.cred.read_text(encoding="utf-8")
+        self.assertNotIn("senha-correta", saved)
+        self.assertNotIn("tok-1", saved)          # só o token de renovação
+        self.assertIn("ref-1", saved)
+        # Gateway reiniciado: nova instância conecta sozinha e publica.
+        again = sync.FirebaseSync(Path(self.tmp.name), "20261124T140000_aaaaaa", lambda: dict(self.antenna), self.cred)
+        self.assertTrue(again.remembered)
+        self.assertTrue(again.auto_connect())
+        self.assertEqual(again.status()["link"], "ok")
+        again.start()
+        while again.flush_once():
+            pass
+        self.assertEqual(self.live()["status"], "preparing")
+        self.assertIn("ref-2", self.cred.read_text(encoding="utf-8"))   # token renovado regravado
+
+    def test_offline_at_boot_keeps_remembered_connection(self):
+        self.connect()
+        again = sync.FirebaseSync(Path(self.tmp.name), "x", lambda: dict(self.antenna), self.cred)
+        old = sync.TOKEN_BASE
+        sync.TOKEN_BASE = "http://127.0.0.1:9/securetoken"      # porta fechada: sem internet
+        try:
+            self.assertFalse(again.auto_connect())
+        finally:
+            sync.TOKEN_BASE = old
+        self.assertTrue(self.cred.exists())
+        self.assertIn("Aguardando internet", again.status()["error"])
+        self.assertTrue(again.auto_connect())
+
+    def test_revoked_token_is_forgotten(self):
+        self.connect()
+        self.cred.write_text(self.cred.read_text(encoding="utf-8").replace("ref-1", "revogado"), encoding="utf-8")
+        again = sync.FirebaseSync(Path(self.tmp.name), "x", lambda: dict(self.antenna), self.cred)
+        self.assertFalse(again.auto_connect())
+        self.assertFalse(self.cred.exists())
+        self.assertIn("Conecte o transmissor novamente", again.status()["error"])
+
+    def test_disconnect_forgets_and_opt_out_does_not_save(self):
+        self.connect()
+        self.s.disconnect()
+        self.assertFalse(self.cred.exists())
+        self.s.configure({"apiKey": "k", "databaseURL": self.db, "email": "tx@canide.test",
+                          "password": "senha-correta", "remember": False})
+        self.assertFalse(self.cred.exists())
 
     def test_queue_is_bounded(self):
         old = sync.MAX_OPS

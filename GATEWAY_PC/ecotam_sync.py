@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import secrets
 import threading
 import time
@@ -39,6 +40,9 @@ MAX_OPS = 120_000          # ~16 h de pontos a 1 Hz com eventos; acima disso des
 CHUNK_OPS = 400            # operações por PATCH
 HTTP_TIMEOUT = 8
 SID_FORMAT = "%Y%m%dT%H%M%SZ"
+# Conexão lembrada do transmissor: fora do repositório e fora do OneDrive.
+# Guarda o token de renovação do Firebase, nunca a senha.
+CREDENTIALS_PATH = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "CANIDE" / "transmissor-firebase.json"
 
 # Campos compactos publicados por ponto. Só entram quando existem na amostra.
 POINT_FIELDS = (
@@ -93,8 +97,11 @@ class SyncError(Exception):
 
 class FirebaseSync:
     def __init__(self, data_dir: Path, gateway_session: str,
-                 antenna_probe: Callable[[], dict[str, Any]] | None = None) -> None:
+                 antenna_probe: Callable[[], dict[str, Any]] | None = None,
+                 credentials_path: Path | None = None) -> None:
         self.lock = threading.RLock()
+        self.credentials_path = Path(credentials_path) if credentials_path else CREDENTIALS_PATH
+        self.remembered = self.credentials_path.exists()   # a thread de envio reconecta sozinha
         self.wake = threading.Event()
         self.data_dir = Path(data_dir)
         self.gateway_session = gateway_session
@@ -227,6 +234,78 @@ class FirebaseSync:
             raw = resp.read(65536)
             return json.loads(raw.decode("utf-8")) if raw else None
 
+    # ------------------------------------------------------------ conexão lembrada
+    def _save_credentials(self) -> None:
+        cfg = self.cfg
+        if cfg is None or not self.refresh_token:
+            return
+        doc = {"apiKey": cfg["apiKey"], "databaseURL": cfg["databaseURL"], "email": cfg["email"],
+               "uid": self.uid, "refreshToken": self.refresh_token}
+        try:
+            self.credentials_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.credentials_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(doc), encoding="utf-8")
+            tmp.replace(self.credentials_path)
+            self.remembered = True
+        except OSError as exc:
+            self.last_error = f"Conectado, mas não foi possível lembrar a conexão neste computador: {exc}"
+
+    def _forget_credentials(self) -> None:
+        try:
+            self.credentials_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        self.remembered = False
+
+    def auto_connect(self) -> bool:
+        """Reconecta com a conexão lembrada. True quando conectou e está autorizado."""
+        try:
+            doc = json.loads(self.credentials_path.read_text(encoding="utf-8"))
+            base, query = normalize_database_url(doc["databaseURL"])
+            api_key, refresh, email = str(doc["apiKey"]), str(doc["refreshToken"]), str(doc["email"])
+        except FileNotFoundError:
+            return False
+        except (OSError, ValueError, KeyError, TypeError):
+            with self.lock:
+                self.last_error = "A conexão lembrada está inválida. Conecte o transmissor novamente."
+            self._forget_credentials()
+            return False
+        with self.lock:
+            self.cfg = {"apiKey": api_key, "base": base, "query": query, "databaseURL": doc["databaseURL"], "email": email}
+            self.refresh_token = refresh
+            self.uid = str(doc.get("uid", ""))
+            self.remembered = True
+            self.link = "retrying"
+        try:
+            self._refresh()
+            allowed = self._request("GET", f"access/transmitters/{self.uid}")
+        except SyncError as exc:
+            msg = str(exc)
+            if any(c in msg for c in ("INVALID_REFRESH_TOKEN", "TOKEN_EXPIRED", "USER_DISABLED", "USER_NOT_FOUND")):
+                with self.lock:
+                    self.cfg = None
+                    self.link = "off"
+                    self.last_error = "A conexão lembrada expirou ou a conta foi alterada. Conecte o transmissor novamente."
+                self._forget_credentials()
+                return False
+            with self.lock:
+                self.last_error = f"Aguardando internet para reconectar o transmissor: {msg[:120]}"
+            return False
+        except urllib.error.HTTPError as exc:
+            allowed = None if exc.code in (401, 403) else False
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            with self.lock:
+                self.last_error = f"Aguardando internet para reconectar o transmissor. Os dados continuam no InfluxDB e no CSV. ({str(exc)[:100]})"
+            return False
+        with self.lock:
+            self.authorized = allowed is True
+            self.link = "ok" if self.authorized else "denied"
+            self.last_error = "" if self.authorized else (
+                f"Conta sem autorização de transmissor. Adicione access/transmitters/{self.uid} = true no Realtime Database.")
+            self._save_credentials()   # o token de renovação pode ter mudado
+        self.wake.set()
+        return bool(self.authorized)
+
     def configure(self, data: dict[str, Any]) -> dict[str, str]:
         api_key = str(data.get("apiKey", "")).strip()
         email = str(data.get("email", "")).strip()
@@ -258,9 +337,15 @@ class FirebaseSync:
         self.wake.set()
         if not self.authorized:
             return {"message": self.last_error}
+        if data.get("remember", True) is not False:
+            with self.lock:
+                self._save_credentials()
+            return {"message": "Transmissor conectado e lembrado neste computador. Nas próximas vezes o gateway se conecta sozinho."}
+        self._forget_credentials()
         return {"message": "Transmissor autenticado e autorizado. A trajetória será publicada no site."}
 
     def disconnect(self) -> dict[str, str]:
+        self._forget_credentials()
         with self.lock:
             self.cfg = None
             self.id_token = self.refresh_token = ""
@@ -268,7 +353,7 @@ class FirebaseSync:
             self.authorized = None
             self.link = "off"
             self.last_error = ""
-        return {"message": "Sincronização online desligada. Recepção, CSV e InfluxDB continuam."}
+        return {"message": "Transmissor desconectado e esquecido neste computador. Recepção, CSV e InfluxDB continuam."}
 
     # ------------------------------------------------------------ trajetória
     def _queue(self, path: str, value: Any) -> None:
@@ -478,9 +563,17 @@ class FirebaseSync:
         return True
 
     def run_forever(self) -> None:
+        retry_at, retry_wait = 0.0, 5.0
         while True:
             self.wake.wait(timeout=1.0)
             self.wake.clear()
+            with self.lock:
+                pending_login = self.remembered and not self.authorized and self.link != "denied"
+            if pending_login and time.monotonic() >= retry_at:
+                if self.auto_connect():
+                    retry_wait = 5.0
+                else:
+                    retry_at, retry_wait = time.monotonic() + retry_wait, min(120.0, retry_wait * 2)
             try:
                 # Esvazia a fila acumulada em lotes seguidos; depois volta ao ritmo normal.
                 for _ in range(50):
@@ -500,6 +593,7 @@ class FirebaseSync:
             return {
                 "configured": self.cfg is not None,
                 "authorized": self.authorized,
+                "remembered": self.remembered,
                 "link": self.link,
                 "uid": self.uid,
                 "database_url": self.cfg["databaseURL"] if self.cfg else "",

@@ -623,6 +623,8 @@ def main() -> None:
         return
     threading.Thread(target=simulation_loop, daemon=True).start()
     threading.Thread(target=influx_loop, daemon=True).start()
+    if SYNC.credentials_path.exists():
+        print("[FIREBASE] Conexão do transmissor lembrada: reconectando automaticamente.", flush=True)
     threading.Thread(target=SYNC.run_forever, daemon=True).start()
     print(f"[OK] Abra http://{HOST}:{PORT} no navegador")
     print("[INFO] Histórico: http://127.0.0.1:8765/historico")

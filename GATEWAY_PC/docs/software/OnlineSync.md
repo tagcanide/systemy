@@ -130,7 +130,7 @@ Desenho: a trajetória é simplificada só no desenho acima de 2.500 posições 
 
 ### Gateway (computador da antena)
 
-`GATEWAY_PC/firebase.config.json` traz os valores públicos (chave web, endereço do banco, endereço do site). No painel **Firebase · transmissor**, informe e-mail e senha e clique em **Conectar transmissor**. Não há variáveis de ambiente obrigatórias.
+`GATEWAY_PC/firebase.config.json` traz os valores públicos (chave web, endereço do banco, endereço do site). No painel **Firebase · transmissor**, informe e-mail e senha e clique em **Conectar transmissor** uma única vez. Com **Manter conectado neste computador** marcado, o gateway guarda só o token de renovação do Firebase (nunca a senha) em `%LOCALAPPDATA%\CANIDE	ransmissor-firebase.json`, fora do OneDrive e do repositório, e se reconecta sozinho a cada início, inclusive se ligar sem internet (tenta de novo com espera crescente até 2 min). **Desconectar e esquecer** apaga esse arquivo. Se a conta for desativada ou a senha trocada, o token deixa de valer e o painel pede a conexão de novo. Não há variáveis de ambiente obrigatórias.
 
 ### GitHub Pages
 

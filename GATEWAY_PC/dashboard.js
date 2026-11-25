@@ -792,6 +792,12 @@ function renderSync(sync, pub, source) {
  const site = $('traj-site');
  if (pub.publicSiteUrl) { setAttr(site, 'href', pub.publicSiteUrl); setText(site, pub.publicSiteUrl.replace(/^https:\/\//, '')); site.target = '_blank'; site.rel = 'noopener'; }
  setText($('traj-error'), sync.error || '');
+ // Transmissor conectado (ou reconectando com a conexão lembrada): o formulário dá lugar ao estado.
+ const linked = !!sync.configured && (sync.authorized === true || !!sync.remembered);
+ $('sync-form').classList.toggle('hidden', linked);
+ $('sync-connected').classList.toggle('hidden', !linked);
+ setText($('sync-account'), sync.email || '—');
+ setText($('sync-auto'), sync.remembered ? (sync.authorized ? 'Reconecta sozinho ao iniciar o gateway.' : 'Reconectando automaticamente…') : 'Conexão só até fechar o gateway.');
 }
 async function trajectory(action, button) {
  if (action === 'finish' && !window.confirm('Encerrar a trajetória para todos os espectadores? A sessão não pode ser reaberta.')) return;
@@ -805,7 +811,7 @@ for (const b of document.querySelectorAll('.traj-actions [data-action]')) b.addE
 $('sync-form').addEventListener('submit', async e => {
  e.preventDefault(); message('sync-message', 'Autenticando o transmissor…');
  try {
-  const out = await busy($('sync-connect'), 'Conectando…', () => post('/api/sync/connect', {databaseURL: $('sync-db').value, apiKey: $('sync-key').value, email: $('sync-email').value, password: $('sync-password').value}));
+  const out = await busy($('sync-connect'), 'Conectando…', () => post('/api/sync/connect', {databaseURL: $('sync-db').value, apiKey: $('sync-key').value, email: $('sync-email').value, password: $('sync-password').value, remember: $('sync-remember').checked}));
   $('sync-password').value = ''; message('sync-message', out.message);
  } catch (err) { message('sync-message', String(err.message || err), true); }
 });

@@ -85,7 +85,7 @@ def main() -> None:
     ecotam_sync.AUTH_BASE = fb + "/identitytoolkit.googleapis.com/v1"
     ecotam_sync.TOKEN_BASE = fb + "/securetoken.googleapis.com/v1"
     gateway.DADOS = tmp
-    gateway.SYNC = ecotam_sync.FirebaseSync(tmp, gateway.SESSION_ID, gateway.antenna_probe)
+    gateway.SYNC = ecotam_sync.FirebaseSync(tmp, gateway.SESSION_ID, gateway.antenna_probe, tmp / "credenciais.json")
     gateway.FIREBASE_CONFIG = tmp / "firebase.config.json"
 
     site_dir = tmp / "site"

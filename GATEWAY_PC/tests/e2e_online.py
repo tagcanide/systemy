@@ -71,7 +71,7 @@ def main() -> int:
     ecotam_sync.AUTH_BASE = fb + "/identitytoolkit.googleapis.com/v1"
     ecotam_sync.TOKEN_BASE = fb + "/securetoken.googleapis.com/v1"
     gateway.DADOS = tmp
-    gateway.SYNC = ecotam_sync.FirebaseSync(tmp, gateway.SESSION_ID, gateway.antenna_probe)
+    gateway.SYNC = ecotam_sync.FirebaseSync(tmp, gateway.SESSION_ID, gateway.antenna_probe, tmp / "credenciais.json")
     web = gateway.GatewayServer(("127.0.0.1", 0), gateway.Handler)
     gateway.PORT = web.server_port
     base = f"http://127.0.0.1:{gateway.PORT}"
