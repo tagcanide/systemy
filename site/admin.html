@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-brand-base="assets/brand/">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#FFFFFF">
+  <meta name="robots" content="noindex">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' __CONNECT_SRC__ __AUTH_SRC__; base-uri 'self'; form-action 'none'; frame-ancestors 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>CANIDÉ · Administração</title>
+  <link rel="icon" href="assets/brand/icons/08-favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/brand/icons/favicon.ico" sizes="32x32">
+  <link rel="stylesheet" href="dashboard.css">
+  <script src="config.js" defer></script>
+  <script src="dashboard.js" defer></script>
+  <script src="admin.js" defer></script>
+</head>
+<body data-page="admin" class="is-loading">
+<a class="skip-link" href="#main">Pular para o conteúdo</a>
+<div class="app">
+<div class="sidebar" data-shell="sidebar"></div>
+<div class="app-main">
+<header class="topbar" data-shell="topbar"></header>
+
+<main id="main" class="page">
+  <section class="hero" aria-labelledby="mission-title">
+    <div class="hero__copy">
+      <h1 id="mission-title" class="mission-title">Administração dos transmissores</h1>
+      <p class="mission-id">Autorize e revogue os computadores que podem transmitir a trajetória</p>
+    </div>
+  </section>
+
+  <section class="panel admin-login" id="login-panel" aria-labelledby="h-login">
+    <header class="panel__head"><div><h2 id="h-login" class="deck-title">Acesso do administrador</h2><p>Somente contas com papel de administrador no Firebase conseguem alterar autorizações.</p></div></header>
+    <form id="login-form" autocomplete="on">
+      <div class="field"><label for="login-email">E-mail</label><input id="login-email" type="email" class="input" required autocomplete="username" spellcheck="false"></div>
+      <div class="field"><label for="login-password">Senha</label><input id="login-password" type="password" class="input" required autocomplete="current-password"></div>
+      <button type="submit" id="login-button" class="btn btn--block">Entrar</button>
+    </form>
+    <p class="fine">A sessão fica só na memória desta aba e expira ao fechá-la. Nada é salvo neste navegador.</p>
+    <p id="login-message" class="msg" role="status"></p>
+  </section>
+
+  <div id="admin-area" class="hidden">
+    <div class="admin-bar panel">
+      <p>Conectado como <strong id="admin-email" class="mono">—</strong></p>
+      <button type="button" id="logout" class="btn btn--ghost">Sair</button>
+    </div>
+    <p id="admin-message" class="msg" role="status"></p>
+
+    <section class="panel" aria-labelledby="h-pending">
+      <header class="panel__head"><div><h2 id="h-pending" class="deck-title">Pedidos de autorização</h2><p>Cada computador com o CANIDÉ aberto pede autorização uma vez. Confira o código mostrado na tela dele antes de aprovar.</p></div><span id="pending-count" class="tag">0</span></header>
+      <div id="pending-list" class="admin-list"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-devices">
+      <header class="panel__head"><div><h2 id="h-devices" class="deck-title">Transmissores autorizados</h2><p>Revogar bloqueia a próxima escrita do computador, mesmo que ele esteja transmitindo.</p></div><span id="devices-count" class="tag">0</span></header>
+      <div id="devices-list" class="admin-list"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-audit">
+      <header class="panel__head"><div><h2 id="h-audit" class="deck-title">Auditoria</h2><p>Últimos 40 registros de autenticação, autorização e trajetória.</p></div></header>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>Quando</th><th>Evento</th><th>Computador</th><th>Detalhe</th></tr></thead><tbody id="audit-rows"><tr><td colspan="4" class="empty-row">Sem registros.</td></tr></tbody></table></div>
+    </section>
+  </div>
+</main>
+<footer class="app-footer"><span class="app-footer__brand"><img src="assets/brand/logos/05-simbolo.svg" alt="" width="40" height="40"><span><b>CANIDÉ</b> · Telemetria &amp; rastreamento<em class="app-footer__slogan">Cabe outro olhar.</em></span></span><span>Alterações valem na hora e ficam registradas na auditoria</span></footer>
+</div>
+</div>
+<nav class="tabbar" data-shell="tabbar" aria-label="Navegação principal"></nav>
+</body>
+</html>

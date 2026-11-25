@@ -1,6 +1,7 @@
-/* Configuração pública do site. Gerada pelo build (site/build.py) a partir das
-   variáveis do repositório; este arquivo é o valor padrão. Não contém segredos:
-   o espectador só lê o Realtime Database, sem chave nem senha. */
+/* Configuração pública do site. Gerada pelo build (site/build.py); este arquivo é o valor padrão.
+   Não contém segredos: a chave de API web do Firebase é pública por natureza e não concede
+   permissão nenhuma. Quem decide o que cada conta pode fazer são as regras do banco. */
 window.CANIDE_CONFIG = Object.freeze({
-  databaseURL: 'https://canide-default-rtdb.firebaseio.com'
+  databaseURL: 'https://canide-default-rtdb.firebaseio.com',
+  apiKey: 'AIzaSyCJDyPgeJFnYEwzcHWKUvNunu8Hm8zvxLY'
 });

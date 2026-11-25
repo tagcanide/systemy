@@ -71,7 +71,7 @@ function store(key, value) {
    favicon para 16–32 px). */
 // O site público (GitHub Pages) roda num subcaminho e define data-brand-base relativo.
 const BRAND = document.documentElement.dataset.brandBase || '/assets/brand/';
-const SPECTATOR = document.body.dataset.page === 'spectator';
+const SPECTATOR = ['spectator', 'admin'].includes(document.body.dataset.page);   // páginas do site público
 const BRAND_FILE = {
  logo: 'logos/01-principal-horizontal.svg', // assinatura colorida: só sobre branco
  negative: 'logos/03-negativa-branca.svg',  // branca: campo azul uniforme
@@ -118,7 +118,8 @@ const ICON = {
 };
 const icon = (name) => `<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICON[name]}</svg>`;
 const NAV = SPECTATOR ? [
- {page: 'spectator', icon: 'live', href: './', label: 'Acompanhar', sections: [['h-state', 'Estado'], ['h-track', 'Trajetória'], ['h-readings', 'Leituras']]}
+ {page: 'spectator', icon: 'live', href: './', label: 'Acompanhar', sections: [['h-state', 'Estado'], ['h-track', 'Trajetória'], ['h-readings', 'Leituras']]},
+ {page: 'admin', icon: 'quality', href: 'admin.html', label: 'Administração', sections: [['h-login', 'Acesso'], ['h-pending', 'Pedidos'], ['h-devices', 'Transmissores'], ['h-audit', 'Auditoria']]}
 ] : [
  {page: 'live', href: '/', label: 'Tempo real', sections: [['h-traj', 'Trajetória online'], ['h-track', 'Plano de voo'], ['bme-title', 'Atmosfera'], ['gps-title', 'GPS'], ['ops-title', 'Gateway e banco']]},
  {page: 'history', href: '/historico', label: 'Histórico', sections: [['h-filters', 'Explorar registros'], ['h-compare', 'Comparar sessões'], ['h-table', 'Dados consultados']]},
@@ -767,13 +768,26 @@ async function refresh() {
 /* Transmissão online: estado da trajetória e da fila de envio ao Firebase. */
 const TRAJ = {preparing: ['Preparando', 'blue'], running: ['Em andamento', 'olive'], paused: ['Pausada', 'yellow'], resuming: ['Retomando', 'blue'], finished: ['Finalizada', 'neutral']};
 const LINK = {off: ['Desligada · dados só no computador', ''], ok: ['Sincronizado', 'ok'], retrying: ['Sem conexão · reenviando', 'warn'], denied: ['Escrita negada', 'err']};
-let syncPrefilled = false;
+const DEVICE = {
+ starting: ['Verificando', '', 'Verificando a identidade deste computador…'],
+ registering: ['Registrando', 'blue', 'Criando a identidade deste computador no serviço de autenticação…'],
+ pending: ['Aguardando autorização', 'yellow', 'Este computador ainda não está autorizado a transmitir. A recepção e a gravação local já funcionam.'],
+ authorized: ['Autorizado', 'olive', 'Computador reconhecido e autorizado. A trajetória é publicada no site automaticamente.'],
+ revoked: ['Revogado', 'danger', 'A autorização deste computador foi revogada. A transmissão está bloqueada até nova autorização.'],
+ offline: ['Sem internet', 'yellow', 'Sem acesso ao serviço online. A antena, o CSV e o InfluxDB continuam; a fila é enviada quando a conexão voltar.'],
+ unconfigured: ['Não configurado', 'danger', 'firebase.config.json ausente ou inválido nesta pasta.']
+};
 function renderSync(sync, pub, source) {
- if (!syncPrefilled) {
-  syncPrefilled = true;
-  if (pub.databaseURL && !$('sync-db').value) $('sync-db').value = pub.databaseURL;
-  if (pub.apiKey && !$('sync-key').value) $('sync-key').value = pub.apiKey;
- }
+ const dev = sync.device || {}, [dlabel, dtone, dtext] = DEVICE[dev.state] || DEVICE.starting;
+ toneTag('device-tag', dlabel, dtone);
+ setText($('device-text'), dev.state === 'authorized' && dev.name ? `${dtext} Nome no cadastro: ${dev.name}.` : dtext);
+ const waiting = dev.state === 'pending' || dev.state === 'revoked';
+ $('device-pairing').classList.toggle('hidden', !waiting);
+ setText($('device-code'), dev.code || '—');
+ setText($('device-computer'), dev.computer || 'este computador');
+ setText($('device-name'), dev.computer || '—');
+ setText($('device-uid'), dev.uid ? dev.uid.slice(0, 10) + '…' : '—');
+ if (pub.publicSiteUrl) setAttr($('device-admin'), 'href', pub.publicSiteUrl.replace(/\/?$/, '/') + 'admin.html');
  const t = sync.trajectory, status = t ? t.status : null;
  const [label, tone] = status ? TRAJ[status] : ['Sem trajetória', ''];
  toneTag('traj-tag', label, tone);
@@ -787,20 +801,11 @@ function renderSync(sync, pub, source) {
  setText($('traj-points'), t ? `${Number(sync.sent_points || 0).toLocaleString('pt-BR')} enviados · ${Number(t.points || 0).toLocaleString('pt-BR')} na sessão` : '—');
  setText($('traj-pending'), `${Number(sync.pending || 0).toLocaleString('pt-BR')} operações${sync.dropped ? ` · ${sync.dropped} descartadas` : ''}`);
  const [linkText, linkState] = LINK[sync.link] || LINK.off;
- setText($('traj-link'), sync.configured ? linkText : 'Transmissor não conectado');
- stateClass($('traj-link'), sync.configured ? linkState : '');
+ setText($('traj-link'), sync.authorized ? linkText : dlabel);
+ stateClass($('traj-link'), sync.authorized ? linkState : dev.state === 'revoked' ? 'err' : 'warn');
  const site = $('traj-site');
  if (pub.publicSiteUrl) { setAttr(site, 'href', pub.publicSiteUrl); setText(site, pub.publicSiteUrl.replace(/^https:\/\//, '')); site.target = '_blank'; site.rel = 'noopener'; }
  setText($('traj-error'), sync.error || '');
- // Transmissor conectado (ou reconectando com a conexão lembrada): o formulário dá lugar ao estado.
- const linked = !!sync.configured && (sync.authorized === true || !!sync.remembered);
- $('sync-form').classList.toggle('hidden', linked);
- $('sync-connected').classList.toggle('hidden', !linked);
- setText($('sync-account'), sync.email || '—');
- setText($('sync-auto'), sync.remembered ? (sync.authorized ? 'Reconecta sozinho ao iniciar o gateway.' : 'Reconectando automaticamente…') : 'Conexão só até fechar o gateway.');
- if (sync.remembered && sync.authorized) setText($('sync-auto'), sync.protected
-  ? 'Credencial cifrada com DPAPI e presa a este computador. Reconecta sozinho ao iniciar.'
-  : 'Credencial de transporte em transmissor.local.json: leve a pasta ao computador da antena. Lá ela é cifrada no primeiro início.');
 }
 async function trajectory(action, button) {
  if (action === 'finish' && !window.confirm('Encerrar a trajetória para todos os espectadores? A sessão não pode ser reaberta.')) return;
@@ -811,14 +816,11 @@ async function trajectory(action, button) {
  } catch (err) { message('traj-message', String(err.message || err), true); }
 }
 for (const b of document.querySelectorAll('.traj-actions [data-action]')) b.addEventListener('click', () => trajectory(b.dataset.action, b));
-$('sync-form').addEventListener('submit', async e => {
- e.preventDefault(); message('sync-message', 'Autenticando o transmissor…');
- try {
-  const out = await busy($('sync-connect'), 'Conectando…', () => post('/api/sync/connect', {databaseURL: $('sync-db').value, apiKey: $('sync-key').value, email: $('sync-email').value, password: $('sync-password').value, remember: $('sync-remember').checked}));
-  $('sync-password').value = ''; message('sync-message', out.message);
- } catch (err) { message('sync-message', String(err.message || err), true); }
+$('device-reset').addEventListener('click', async () => {
+ if (!window.confirm('Gerar nova identidade? Este computador deixa de transmitir até ser autorizado de novo.')) return;
+ try { const out = await busy($('device-reset'), 'Gerando…', () => post('/api/device/reset', {})); message('sync-message', out.message); await refresh(); }
+ catch (err) { message('sync-message', String(err.message || err), true); }
 });
-$('sync-disconnect').addEventListener('click', async () => { try { const out = await busy($('sync-disconnect'), 'Desligando…', () => post('/api/sync/disconnect', {})); message('sync-message', out.message); } catch (err) { message('sync-message', String(err.message || err), true); } });
 
 /* Relógio de missão: apenas o relógio do navegador, sem comunicação com o gateway. */
 function tickClock() {

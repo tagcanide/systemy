@@ -234,20 +234,20 @@
         <p id="connect-message" class="msg" role="status"></p>
       </section>
       <section class="panel" id="sync-panel" aria-labelledby="h-sync">
-        <header class="panel__head"><div><h3 id="h-sync">Firebase · transmissor</h3><p>Conta autorizada a publicar a trajetória</p></div></header>
-        <form id="sync-form" autocomplete="off">
-          <div class="field"><label for="sync-db">Realtime Database</label><input id="sync-db" name="sync-db" type="url" class="input mono" required placeholder="https://projeto-default-rtdb.firebaseio.com" spellcheck="false"></div>
-          <div class="field"><label for="sync-key">Chave de API web</label><input id="sync-key" name="sync-key" class="input mono" required spellcheck="false" placeholder="Chave pública do app web…"></div>
-          <div class="field"><label for="sync-email">E-mail do transmissor</label><input id="sync-email" name="sync-email" type="email" class="input" required autocomplete="username" spellcheck="false" placeholder="transmissor@…"></div>
-          <div class="field"><label for="sync-password">Senha</label><input id="sync-password" name="sync-password" type="password" class="input" required autocomplete="current-password" placeholder="Senha da conta do transmissor…"></div>
-          <label class="check" for="sync-remember"><input type="checkbox" id="sync-remember" checked><span>Manter conectado neste computador</span></label>
-          <button type="submit" id="sync-connect" class="btn btn--block">Conectar transmissor</button>
-        </form>
-        <div id="sync-connected" class="hidden">
-          <p class="note">Conectado como <strong id="sync-account" class="mono">—</strong>. <span id="sync-auto"></span></p>
-          <button type="button" id="sync-disconnect" class="btn btn--ghost btn--block">Desconectar e esquecer</button>
+        <header class="panel__head"><div><h3 id="h-sync">Identidade deste computador</h3><p>Autorização online para transmitir</p></div><span id="device-tag" class="tag">Verificando</span></header>
+        <p id="device-text" class="note">Verificando a identidade deste computador…</p>
+        <div id="device-pairing" class="pairing hidden">
+          <span class="status-label">Código de autorização</span>
+          <strong id="device-code" class="pairing__code mono">—</strong>
+          <p class="fine">Na página de administração do site, confira se o mesmo código aparece para <b id="device-computer">este computador</b> e clique em Autorizar. Nenhum arquivo ou senha é necessário aqui.</p>
+          <a id="device-admin" class="btn btn--block" href="#" target="_blank" rel="noopener">Abrir página de administração</a>
         </div>
-        <p class="fine">A senha não é gravada. Com a opção marcada, o gateway cria transmissor.local.json nesta pasta, só com o token de renovação do Firebase. Leve a pasta ao computador da antena por pendrive: no primeiro início lá, o arquivo é cifrado com o DPAPI do Windows e passa a funcionar só naquele computador. O arquivo nunca vai para o repositório.</p>
+        <dl class="traj-facts device-facts">
+          <div><dt>Computador</dt><dd id="device-name" class="mono">—</dd></div>
+          <div><dt>Identificador</dt><dd id="device-uid" class="mono">—</dd></div>
+        </dl>
+        <p class="fine">A identidade é criada por este computador e fica só nele, cifrada com o DPAPI do Windows. A autorização e a revogação acontecem online, pelo administrador.</p>
+        <button type="button" id="device-reset" class="btn btn--ghost btn--block">Gerar nova identidade</button>
         <p id="sync-message" class="msg" role="status"></p>
       </section>
       <section class="panel" aria-labelledby="h-counters">

@@ -9,9 +9,11 @@ espectadores do site público. Nada aqui bloqueia a recepção da antena:
 * sem internet ou sem Firebase, a fila cresce (limitada) e é enviada depois,
   na mesma ordem. Chaves determinísticas tornam o reenvio idempotente.
 
-Autorização: o gateway entra com uma conta do Firebase Authentication
-(e-mail e senha, só em memória). As regras do banco só aceitam escrita de UIDs
-listados em ``access/transmitters``. Nenhuma credencial administrativa é usada.
+Autorização: cada computador tem identidade própria no Firebase Authentication,
+criada por ele mesmo na primeira execução e guardada cifrada (DPAPI) só nele.
+O administrador autoriza o computador online (site/admin.html); as regras do banco,
+avaliadas no servidor, só aceitam escrita de UIDs em ``access/transmitters``.
+Revogar remove o UID e bloqueia a próxima escrita. Nenhuma credencial é transportada.
 """
 from __future__ import annotations
 
@@ -42,12 +44,10 @@ MAX_OPS = 120_000          # ~16 h de pontos a 1 Hz com eventos; acima disso des
 CHUNK_OPS = 400            # operações por PATCH
 HTTP_TIMEOUT = 8
 SID_FORMAT = "%Y%m%dT%H%M%SZ"
-# Credencial do transmissor: token de renovação do Firebase, nunca a senha.
-# Fica na pasta do gateway para acompanhar a pasta até o computador da antena
-# (OneDrive, pendrive ou zip). O .gitignore impede que vá para o repositório público.
-CREDENTIALS_PATH = Path(__file__).resolve().parent / "transmissor.local.json"
-# Local usado pela versão anterior; ainda é lido se existir.
-LEGACY_CREDENTIALS_PATH = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "CANIDE" / "transmissor-firebase.json"
+# Identidade deste computador: fica só nele, fora do OneDrive e do repositório.
+IDENTITY_PATH = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "CANIDE" / "identidade-dispositivo.json"
+AUTH_RECHECK_S = 60.0       # autorizado: reconfere a autorização (revogação) a cada minuto
+PENDING_POLL_S = 10.0       # aguardando aprovação: consulta a cada 10 s
 
 # Campos compactos publicados por ponto. Só entram quando existem na amostra.
 POINT_FIELDS = (
@@ -103,18 +103,23 @@ class SyncError(Exception):
 class FirebaseSync:
     def __init__(self, data_dir: Path, gateway_session: str,
                  antenna_probe: Callable[[], dict[str, Any]] | None = None,
-                 credentials_path: Path | None = None) -> None:
+                 identity_path: Path | None = None, public_config: dict[str, str] | None = None) -> None:
         self.lock = threading.RLock()
-        self.credentials_path = Path(credentials_path) if credentials_path else CREDENTIALS_PATH
-        if credentials_path is None and not self.credentials_path.exists() and LEGACY_CREDENTIALS_PATH.exists():
-            self.credentials_path = LEGACY_CREDENTIALS_PATH
-        self.remembered = self.credentials_path.exists()   # a thread de envio reconecta sozinha
-        self.protected = False
+        self.identity_path = Path(identity_path) if identity_path else IDENTITY_PATH
+        self.computer = ecotam_secret.this_computer() or "COMPUTADOR"
+        self.device_state = "starting"   # starting|registering|pending|authorized|revoked|offline|unconfigured
+        self.device_name = ""
+        self.pair_code = ""
+        self.identity_created = 0
+        self.new_identity = False
+        self.next_auth = 0.0
         self.wake = threading.Event()
         self.data_dir = Path(data_dir)
         self.gateway_session = gateway_session
         self.antenna_probe = antenna_probe or (lambda: {"state": "none", "ageS": None, "source": "rx_serial"})
         self.cfg: dict[str, Any] | None = None
+        if public_config:
+            self.set_public_config(public_config)
         self.id_token = ""
         self.refresh_token = ""
         self.token_exp = 0.0
@@ -181,6 +186,18 @@ class FirebaseSync:
             self.traj = data
             self.traj["gatewaySession"] = self.gateway_session
 
+    # ------------------------------------------------------------ configuração pública
+    def set_public_config(self, public: dict[str, str]) -> None:
+        """Chave de API web e endereço do banco: valores públicos do repositório, iguais em todo computador."""
+        try:
+            base, query = normalize_database_url(public.get("databaseURL", ""))
+        except ValueError as exc:
+            self.last_error = str(exc)
+            return
+        api_key = str(public.get("apiKey", "")).strip()
+        if api_key:
+            self.cfg = {"apiKey": api_key, "base": base, "query": query, "databaseURL": public["databaseURL"]}
+
     # ------------------------------------------------------------ autenticação
     def _post_json(self, url: str, payload: bytes, ctype: str) -> dict[str, Any]:
         req = urllib.request.Request(url, data=payload, method="POST",
@@ -194,25 +211,6 @@ class FirebaseSync:
             except ValueError:
                 detail = ""
             raise SyncError(f"HTTP {exc.code} {detail}".strip()) from exc
-
-    def _sign_in(self, api_key: str, email: str, password: str) -> None:
-        url = f"{AUTH_BASE}/accounts:signInWithPassword?" + urllib.parse.urlencode({"key": api_key})
-        try:
-            out = self._post_json(url, json.dumps({"email": email, "password": password, "returnSecureToken": True}).encode(),
-                                  "application/json")
-        except SyncError as exc:
-            msg = str(exc)
-            if any(code in msg for code in ("INVALID_LOGIN_CREDENTIALS", "INVALID_PASSWORD", "EMAIL_NOT_FOUND", "INVALID_EMAIL")):
-                raise ValueError("E-mail ou senha do transmissor incorretos") from exc
-            if "API key" in msg or "API_KEY" in msg:
-                raise ValueError("Chave de API do Firebase inválida") from exc
-            if "OPERATION_NOT_ALLOWED" in msg or "PASSWORD_LOGIN_DISABLED" in msg:
-                raise ValueError("Ative o login por e-mail e senha no Firebase Authentication") from exc
-            raise ValueError(f"Falha ao autenticar no Firebase: {msg}") from exc
-        self.id_token = out["idToken"]
-        self.refresh_token = out["refreshToken"]
-        self.token_exp = time.monotonic() + int(out.get("expiresIn", "3600")) - 300
-        self.uid = out["localId"]
 
     def _refresh(self) -> None:
         cfg = self.cfg
@@ -242,138 +240,167 @@ class FirebaseSync:
             raw = resp.read(65536)
             return json.loads(raw.decode("utf-8")) if raw else None
 
-    # ------------------------------------------------------------ conexão lembrada
-    def _save_credentials(self, transport: bool = False) -> None:
-        """transport=True: arquivo em texto para levar ao computador da antena (gerado no painel).
-        transport=False: arquivo cifrado com DPAPI, preso à conta Windows deste computador."""
-        cfg = self.cfg
-        if cfg is None or not self.refresh_token:
-            return
-        doc = {"apiKey": cfg["apiKey"], "databaseURL": cfg["databaseURL"], "email": cfg["email"],
-               "uid": self.uid, "refreshToken": self.refresh_token, "origin": ecotam_secret.this_computer()}
-        payload: dict[str, Any] = doc
-        if not transport and ecotam_secret.available():
-            payload = ecotam_secret.protect(json.dumps(doc).encode("utf-8"))
+    # ------------------------------------------------------------ identidade do computador
+    # Cada computador cria sua própria conta no Firebase Authentication (anônima, sem senha)
+    # na primeira execução. O token de renovação dessa conta fica só neste computador,
+    # cifrado com DPAPI em %LOCALAPPDATA%\CANIDE (fora do OneDrive e do repositório).
+    # Ninguém copia credenciais: o administrador autoriza o UID pela página admin.html,
+    # e as regras do banco (avaliadas no servidor) só aceitam escrita de UIDs autorizados.
+    def _load_identity(self) -> dict[str, Any] | None:
         try:
-            self.credentials_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.credentials_path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(payload), encoding="utf-8")
-            tmp.replace(self.credentials_path)
-            self.remembered = True
-            self.protected = payload is not doc
-        except (OSError, ValueError) as exc:
-            self.last_error = f"Conectado, mas não foi possível lembrar a conexão neste computador: {exc}"
-
-    def _forget_credentials(self) -> None:
-        try:
-            self.credentials_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        self.remembered = False
-
-    def auto_connect(self) -> bool:
-        """Reconecta com a conexão lembrada. True quando conectou e está autorizado."""
-        try:
-            stored = json.loads(self.credentials_path.read_text(encoding="utf-8"))
-            was_protected = stored.get("format") == ecotam_secret.FORMAT
-            doc = json.loads(ecotam_secret.unprotect(stored)) if was_protected else stored
-            base, query = normalize_database_url(doc["databaseURL"])
-            api_key, refresh, email = str(doc["apiKey"]), str(doc["refreshToken"]), str(doc["email"])
+            stored = json.loads(self.identity_path.read_text(encoding="utf-8"))
         except FileNotFoundError:
-            return False
-        except (OSError, ValueError, KeyError, TypeError) as exc:
-            with self.lock:
-                self.last_error = (str(exc) if "outro computador" in str(exc)
-                                   else "A conexão lembrada está inválida. Conecte o transmissor novamente.")
-                self.remembered = False
-            return False   # o arquivo é mantido: pode ser de outro computador
-        with self.lock:
-            self.cfg = {"apiKey": api_key, "base": base, "query": query, "databaseURL": doc["databaseURL"], "email": email}
-            self.refresh_token = refresh
-            self.uid = str(doc.get("uid", ""))
-            self.remembered = True
-            self.link = "retrying"
+            return None
+        except (OSError, ValueError):
+            return None
         try:
-            self._refresh()
-            allowed = self._request("GET", f"access/transmitters/{self.uid}")
+            if stored.get("format") == ecotam_secret.FORMAT:
+                return json.loads(ecotam_secret.unprotect(stored))
+            if not ecotam_secret.available():       # fora do Windows (testes/CI): sem DPAPI
+                return stored
+        except (ValueError, KeyError, TypeError):
+            pass
+        return None                                 # de outra conta Windows ou adulterado: nova identidade
+
+    def _save_identity(self) -> None:
+        doc = {"uid": self.uid, "refreshToken": self.refresh_token, "pairCode": self.pair_code,
+               "computer": self.computer, "createdAt": self.identity_created}
+        payload: dict[str, Any] = (ecotam_secret.protect(json.dumps(doc).encode("utf-8"))
+                                   if ecotam_secret.available() else doc)
+        self.identity_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.identity_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        tmp.replace(self.identity_path)
+
+    @staticmethod
+    def _new_pair_code() -> str:
+        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"     # sem 0/O e 1/I para leitura em voz alta
+        raw = "".join(secrets.choice(alphabet) for _ in range(8))
+        return raw[:4] + "-" + raw[4:]
+
+    def _register(self) -> None:
+        """Cria a identidade deste computador (conta anônima própria)."""
+        cfg = self.cfg
+        assert cfg is not None
+        url = f"{AUTH_BASE}/accounts:signUp?" + urllib.parse.urlencode({"key": cfg["apiKey"]})
+        out = self._post_json(url, json.dumps({"returnSecureToken": True}).encode(), "application/json")
+        with self.lock:
+            self.uid = out["localId"]
+            self.id_token = out["idToken"]
+            self.refresh_token = out["refreshToken"]
+            self.token_exp = time.monotonic() + int(out.get("expiresIn", "3600")) - 300
+            self.pair_code = self._new_pair_code()
+            self.identity_created = now_ms()
+            self._save_identity()
+            self.new_identity = True
+
+    def _audit(self, kind: str, detail: str = "") -> None:
+        """Registro de auditoria imediato (fora da fila de telemetria)."""
+        self.key_counter += 1
+        key = f"{now_ms():013d}_{self.key_counter % 1_000_000:06d}"
+        entry = {"type": kind, "uid": self.uid, "at": {".sv": "timestamp"}, "computer": self.computer}
+        if detail:
+            entry["detail"] = detail[:200]
+        try:
+            self._request("PUT", f"audit/{key}", entry)
+        except (urllib.error.URLError, OSError):
+            pass
+
+    def authenticate(self) -> str:
+        """Identidade + autorização. Retorna o estado do dispositivo. Nunca bloqueia a recepção."""
+        with self.lock:
+            if self.cfg is None:
+                self.device_state = "unconfigured"
+                return self.device_state
+        try:
+            if not self.uid:
+                ident = self._load_identity()
+                if ident:
+                    with self.lock:
+                        self.uid, self.refresh_token = ident["uid"], ident["refreshToken"]
+                        self.pair_code = ident.get("pairCode") or self._new_pair_code()
+                        self.identity_created = ident.get("createdAt", 0)
+                        self.token_exp = 0.0
+                else:
+                    with self.lock:
+                        self.device_state = "registering"
+                    self._register()
+            if time.monotonic() >= self.token_exp:
+                self._refresh()
+            access = self._request("GET", f"access/transmitters/{self.uid}")
         except SyncError as exc:
             msg = str(exc)
             if any(c in msg for c in ("INVALID_REFRESH_TOKEN", "TOKEN_EXPIRED", "USER_DISABLED", "USER_NOT_FOUND")):
+                # Conta do computador apagada ou desativada pelo administrador: identidade nova,
+                # que precisa de nova autorização. Nada volta a transmitir sem aprovação.
                 with self.lock:
-                    self.cfg = None
-                    self.link = "off"
-                    self.last_error = "A conexão lembrada expirou ou a conta foi alterada. Conecte o transmissor novamente."
-                self._forget_credentials()
-                return False
+                    self.uid = ""
+                    self.authorized = False
+                    self.device_state = "revoked"
+                    self.last_error = "A identidade deste computador foi revogada. Uma nova identidade aguarda autorização."
+                    self.identity_path.unlink(missing_ok=True)
+                return self.device_state
             with self.lock:
-                self.last_error = f"Aguardando internet para reconectar o transmissor: {msg[:120]}"
-            return False
+                self.device_state = "offline"
+                self.last_error = f"Sem acesso ao serviço de autenticação: {msg[:120]}. A gravação local continua."
+            return self.device_state
         except urllib.error.HTTPError as exc:
-            allowed = None if exc.code in (401, 403) else False
-        except (urllib.error.URLError, OSError, ValueError) as exc:
             with self.lock:
-                self.last_error = f"Aguardando internet para reconectar o transmissor. Os dados continuam no InfluxDB e no CSV. ({str(exc)[:100]})"
-            return False
-        with self.lock:
-            self.authorized = allowed is True
-            self.link = "ok" if self.authorized else "denied"
-            self.last_error = "" if self.authorized else (
-                f"Conta sem autorização de transmissor. Adicione access/transmitters/{self.uid} = true no Realtime Database.")
-            # Arquivo trazido de outro computador: cifra com DPAPI aqui e some o texto puro.
-            # No computador que gerou o arquivo (transporte), ele continua em texto para poder viajar.
-            in_transport = not was_protected and doc.get("origin") == ecotam_secret.this_computer()
-            self._save_credentials(transport=in_transport)
-        self.wake.set()
-        return bool(self.authorized)
+                self.device_state = "offline"
+                self.last_error = f"Sem acesso ao Realtime Database (HTTP {exc.code}). A gravação local continua."
+            return self.device_state
+        except (urllib.error.URLError, OSError, ValueError, KeyError) as exc:
+            with self.lock:
+                self.device_state = "offline"
+                self.last_error = f"Sem internet para autenticar este computador. A gravação local continua. ({str(exc)[:100]})"
+            return self.device_state
 
-    def configure(self, data: dict[str, Any]) -> dict[str, str]:
-        api_key = str(data.get("apiKey", "")).strip()
-        email = str(data.get("email", "")).strip()
-        password = str(data.get("password", ""))
-        base, query = normalize_database_url(str(data.get("databaseURL", "")))
-        if not api_key or not email or not password:
-            raise ValueError("Preencha chave de API, e-mail e senha do transmissor")
-        if len(api_key) > 128 or len(email) > 254 or len(password) > 256:
-            raise ValueError("Dados de acesso inválidos")
-        self._sign_in(api_key, email, password)
+        if access:
+            was = self.authorized
+            with self.lock:
+                self.authorized = True
+                self.device_state = "authorized"
+                self.device_name = access.get("name", "") if isinstance(access, dict) else ""
+                self.link = "ok" if self.link in ("off", "denied") else self.link
+                self.last_error = ""
+            try:
+                self._request("PUT", f"devices/{self.uid}", {"computer": self.computer, "lastSeen": {".sv": "timestamp"},
+                                                             "antenna": self.antenna_probe().get("state", "none")})
+            except (urllib.error.URLError, OSError):
+                pass
+            if not was:
+                self._audit("auth_ok", f"gateway {self.gateway_session}")
+            self.wake.set()
+            return self.device_state
+
+        was_authorized = bool(self.authorized) or self.device_state == "revoked"
         with self.lock:
-            self.cfg = {"apiKey": api_key, "base": base, "query": query, "databaseURL": str(data.get("databaseURL", "")).strip(),
-                        "email": email}
+            self.authorized = False
+            self.device_state = "revoked" if was_authorized else "pending"
+            self.last_error = ("Este computador foi revogado pelo administrador. A transmissão está bloqueada."
+                               if was_authorized else "")
+        # Pedido de autorização: o administrador confere o código mostrado aqui e aprova.
         try:
-            allowed = self._request("GET", f"access/transmitters/{self.uid}")
-        except urllib.error.HTTPError as exc:
-            allowed = None if exc.code in (401, 403) else False
+            self._request("PUT", f"pairing/{self.uid}", {"code": self.pair_code, "computer": self.computer,
+                                                         "requestedAt": {".sv": "timestamp"}})
+            if self.new_identity or was_authorized:
+                self._audit("pairing_request" if not was_authorized else "revoked_detected")
+                self.new_identity = False
         except (urllib.error.URLError, OSError) as exc:
             with self.lock:
-                self.cfg = None
-            raise ValueError(f"Realtime Database não respondeu: {exc}") from exc
-        with self.lock:
-            self.authorized = allowed is True
-            self.link = "ok" if self.authorized else "denied"
-            self.last_error = "" if self.authorized else (
-                f"Conta autenticada, mas sem autorização de transmissor. Adicione access/transmitters/{self.uid} = true no Realtime Database.")
-            self.next_try = 0.0
-            self.backoff = 0.0
-        self.wake.set()
-        if not self.authorized:
-            return {"message": self.last_error}
-        if data.get("remember", True) is not False:
-            with self.lock:
-                self._save_credentials(transport=True)
-            return {"message": "Transmissor conectado e lembrado neste computador. Nas próximas vezes o gateway se conecta sozinho."}
-        self._forget_credentials()
-        return {"message": "Transmissor autenticado e autorizado. A trajetória será publicada no site."}
+                self.last_error = f"Não foi possível registrar o pedido de autorização: {str(exc)[:120]}"
+        return self.device_state
 
-    def disconnect(self) -> dict[str, str]:
-        self._forget_credentials()
+    def reset_identity(self) -> dict[str, str]:
+        """Recuperação: descarta a identidade deste computador e cria outra (exige nova autorização)."""
         with self.lock:
-            self.cfg = None
-            self.id_token = self.refresh_token = ""
-            self.uid = ""
-            self.authorized = None
-            self.link = "off"
-            self.last_error = ""
-        return {"message": "Transmissor desconectado e esquecido neste computador. Recepção, CSV e InfluxDB continuam."}
+            self.identity_path.unlink(missing_ok=True)
+            self.uid = self.refresh_token = self.id_token = ""
+            self.authorized = False
+            self.device_state = "starting"
+            self.next_auth = 0.0
+        self.wake.set()
+        return {"message": "Identidade descartada. Uma nova identidade será criada e precisa ser autorizada na página de administração."}
 
     # ------------------------------------------------------------ trajetória
     def _queue(self, path: str, value: Any) -> None:
@@ -388,6 +415,15 @@ class FirebaseSync:
         self.key_counter += 1
         key = f"{now_ms():013d}_{self.key_counter % 1_000_000:06d}"
         self._queue(f"sessions/{t['id']}/events/{key}", {"type": kind, "at": {".sv": "timestamp"}})
+
+    def _audit_op(self, kind: str) -> None:
+        t = self.traj
+        self.key_counter += 1
+        key = f"{now_ms():013d}_{self.key_counter % 1_000_000:06d}"
+        entry = {"type": kind, "uid": "", "at": {".sv": "timestamp"}, "computer": self.computer}   # uid no envio
+        if t:
+            entry["detail"] = t["id"]
+        self._queue(f"audit/{key}", entry)
 
     def _set_status(self, status: str, stamp_field: str | None = None) -> None:
         t = self.traj
@@ -425,6 +461,7 @@ class FirebaseSync:
                                  "startedAt": server_ts, "source": source, "points": 0, "lastKey": "",
                                  "heartbeatAt": server_ts, "antenna": self._antenna_doc(antenna)})
             self._event("start")
+            self._audit_op("trajectory_start")
             self._journal("start")
         self.wake.set()
         return {"message": f"Trajetória {sid} iniciada. Os espectadores passam a acompanhar automaticamente."}
@@ -440,6 +477,7 @@ class FirebaseSync:
             self._require(("preparing", "running", "resuming"), "pausada")
             self._set_status("paused", "pausedAt")
             self._event("pause")
+            self._audit_op("trajectory_pause")
             self._journal("pause")
         self.wake.set()
         return {"message": "Trajetória pausada. A gravação local continua; o site deixa de receber pontos."}
@@ -449,6 +487,7 @@ class FirebaseSync:
             self._require(("paused",), "retomada")
             self._set_status("resuming", "resumedAt")
             self._event("resume")
+            self._audit_op("trajectory_resume")
             self._journal("resume")
         self.wake.set()
         return {"message": "Trajetória retomada. O próximo ponto recebido volta a ser publicado."}
@@ -458,6 +497,7 @@ class FirebaseSync:
             t = self._require(("preparing", "running", "paused", "resuming"), "encerrada")
             self._set_status("finished", "finishedAt")
             self._event("finish")
+            self._audit_op("trajectory_finish")
             self._journal("finish")
             sid = t["id"]
         self.wake.set()
@@ -519,6 +559,8 @@ class FirebaseSync:
             if time.monotonic() < self.next_try:
                 return False
             payload, count, n, last_key = self._take_chunk()
+            for path in [k for k in payload if k.startswith("audit/")]:
+                payload[path] = dict(payload[path], uid=self.uid)
             t = self.traj
             beat_due = (t is not None and t["status"] != "finished"
                         and time.monotonic() - self.last_heartbeat >= HEARTBEAT_S)
@@ -550,10 +592,14 @@ class FirebaseSync:
             detail = exc.read(300).decode("utf-8", "replace")
             with self.lock:
                 self.failures += 1
-                if exc.code == 403 or "Permission denied" in detail:
+                if exc.code in (401, 403) or "Permission denied" in detail:
+                    # Revogado no servidor (ou dado inválido): para de enviar e reconfere a autorização já.
                     self.link = "denied"
-                    self.last_error = "Firebase recusou a escrita (permissão ou validação). Confira as regras e access/transmitters."
+                    self.authorized = False
+                    self.device_state = "revoked"
+                    self.last_error = "O servidor recusou a escrita: este computador não está autorizado no momento."
                     self.backoff = 30.0
+                    self.next_auth = 0.0
                 else:
                     self.link = "retrying"
                     self.last_error = f"Firebase HTTP {exc.code}: {detail[:160]}"
@@ -583,17 +629,19 @@ class FirebaseSync:
         return True
 
     def run_forever(self) -> None:
-        retry_at, retry_wait = 0.0, 5.0
+        offline_wait = 5.0
         while True:
             self.wake.wait(timeout=1.0)
             self.wake.clear()
-            with self.lock:
-                pending_login = self.remembered and not self.authorized and self.link != "denied"
-            if pending_login and time.monotonic() >= retry_at:
-                if self.auto_connect():
-                    retry_wait = 5.0
+            if time.monotonic() >= self.next_auth:
+                state = self.authenticate()
+                if state == "offline":
+                    wait, offline_wait = offline_wait, min(120.0, offline_wait * 2)
                 else:
-                    retry_at, retry_wait = time.monotonic() + retry_wait, min(120.0, retry_wait * 2)
+                    offline_wait = 5.0
+                    wait = AUTH_RECHECK_S if state == "authorized" else PENDING_POLL_S
+                with self.lock:
+                    self.next_auth = time.monotonic() + wait
             try:
                 # Esvazia a fila acumulada em lotes seguidos; depois volta ao ritmo normal.
                 for _ in range(50):
@@ -613,12 +661,11 @@ class FirebaseSync:
             return {
                 "configured": self.cfg is not None,
                 "authorized": self.authorized,
-                "remembered": self.remembered,
-                "protected": self.protected,
                 "link": self.link,
-                "uid": self.uid,
+                "device": {"state": self.device_state, "uid": self.uid, "code": self.pair_code,
+                           "computer": self.computer, "name": self.device_name,
+                           "protected": ecotam_secret.available()},
                 "database_url": self.cfg["databaseURL"] if self.cfg else "",
-                "email": self.cfg["email"] if self.cfg else "",
                 "pending": len(self.ops),
                 "sent_points": self.sent_points,
                 "failures": self.failures,

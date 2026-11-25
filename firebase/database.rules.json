@@ -2,17 +2,104 @@
   "rules": {
     ".read": false,
     ".write": false,
+    "admins": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": false
+      }
+    },
     "access": {
       "transmitters": {
+        ".read": "auth != null && root.child('admins').child(auth.uid).val() === true",
         "$uid": {
-          ".read": "auth != null && auth.uid === $uid",
-          ".write": false
+          ".read": "auth != null && (auth.uid === $uid || root.child('admins').child(auth.uid).val() === true)",
+          ".write": "auth != null && root.child('admins').child(auth.uid).val() === true",
+          ".validate": "newData.hasChildren(['name', 'approvedAt', 'approvedBy'])",
+          "name": {
+            ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 64"
+          },
+          "approvedAt": {
+            ".validate": "newData.isNumber() && newData.val() <= now"
+          },
+          "approvedBy": {
+            ".validate": "newData.val() === auth.uid"
+          },
+          "computer": {
+            ".validate": "newData.isString() && newData.val().length <= 64"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    },
+    "pairing": {
+      ".read": "auth != null && root.child('admins').child(auth.uid).val() === true",
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || root.child('admins').child(auth.uid).val() === true)",
+        ".write": "auth != null && (auth.uid === $uid || root.child('admins').child(auth.uid).val() === true)",
+        ".validate": "!newData.exists() || newData.hasChildren(['code', 'computer', 'requestedAt'])",
+        "code": {
+          ".validate": "newData.isString() && newData.val().matches(/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/)"
+        },
+        "computer": {
+          ".validate": "newData.isString() && newData.val().length <= 64"
+        },
+        "requestedAt": {
+          ".validate": "newData.isNumber() && newData.val() <= now"
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+    "devices": {
+      ".read": "auth != null && root.child('admins').child(auth.uid).val() === true",
+      "$uid": {
+        ".write": "auth != null && ((auth.uid === $uid && root.child('access/transmitters').child(auth.uid).exists()) || root.child('admins').child(auth.uid).val() === true)",
+        ".validate": "!newData.exists() || newData.hasChildren(['computer', 'lastSeen'])",
+        "computer": {
+          ".validate": "newData.isString() && newData.val().length <= 64"
+        },
+        "lastSeen": {
+          ".validate": "newData.isNumber() && newData.val() <= now"
+        },
+        "antenna": {
+          ".validate": "newData.isString() && newData.val().matches(/^(ok|stale|none|disconnected|simulated)$/)"
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+    "audit": {
+      ".read": "auth != null && root.child('admins').child(auth.uid).val() === true",
+      "$k": {
+        ".write": "auth != null && !data.exists() && (root.child('access/transmitters').child(auth.uid).exists() || root.child('admins').child(auth.uid).val() === true || root.child('pairing').child(auth.uid).exists())",
+        ".validate": "$k.matches(/^[0-9]{13}_[0-9]{6}$/) && newData.hasChildren(['type', 'uid', 'at']) && newData.child('uid').val() === auth.uid",
+        "type": {
+          ".validate": "newData.isString() && newData.val().matches(/^(pairing_request|auth_ok|revoked_detected|device_approved|device_revoked|admin_login|trajectory_start|trajectory_pause|trajectory_resume|trajectory_finish)$/)"
+        },
+        "uid": {
+          ".validate": "newData.isString()"
+        },
+        "at": {
+          ".validate": "newData.isNumber() && newData.val() <= now"
+        },
+        "computer": {
+          ".validate": "newData.isString() && newData.val().length <= 64"
+        },
+        "detail": {
+          ".validate": "newData.isString() && newData.val().length <= 200"
+        },
+        "$other": {
+          ".validate": false
         }
       }
     },
     "live": {
       ".read": true,
-      ".write": "auth != null && root.child('access/transmitters').child(auth.uid).val() === true",
+      ".write": "auth != null && root.child('access/transmitters').child(auth.uid).exists()",
       ".validate": "newData.hasChildren(['sessionId', 'status'])",
       "sessionId": {
         ".validate": "newData.isString() && newData.val().matches(/^[0-9]{8}T[0-9]{6}Z_[0-9a-f]{6}$/)"
@@ -57,7 +144,7 @@
     "sessions": {
       "$sid": {
         ".read": true,
-        ".write": "auth != null && root.child('access/transmitters').child(auth.uid).val() === true",
+        ".write": "auth != null && root.child('access/transmitters').child(auth.uid).exists()",
         ".validate": "$sid.matches(/^[0-9]{8}T[0-9]{6}Z_[0-9a-f]{6}$/)",
         "info": {
           "status": {

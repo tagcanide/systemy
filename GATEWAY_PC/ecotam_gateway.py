@@ -98,9 +98,6 @@ def antenna_probe() -> dict[str, Any]:
         return {"source": source, "state": state, "ageS": age, "hasSample": has_sample}
 
 
-SYNC = ecotam_sync.FirebaseSync(DADOS, SESSION_ID, antenna_probe)
-
-
 def public_firebase_config() -> dict[str, str]:
     """Valores públicos (chave de API web, endereço do banco, site). Nunca contém senha."""
     try:
@@ -108,6 +105,9 @@ def public_firebase_config() -> dict[str, str]:
     except (OSError, ValueError):
         return {}
     return {k: str(data[k]) for k in ("apiKey", "databaseURL", "publicSiteUrl") if isinstance(data.get(k), str)}
+
+
+SYNC = ecotam_sync.FirebaseSync(DADOS, SESSION_ID, antenna_probe, public_config=public_firebase_config())
 
 
 def build_simulated_sample(sequence: int) -> dict[str, Any]:
@@ -556,10 +556,8 @@ class Handler(BaseHTTPRequestHandler):
                 with STATE.lock:
                     cfg = STATE.config.copy() if STATE.config else None
                 result = ecotam_quality.quality_result(cfg, body)
-            elif self.path == "/api/sync/connect":
-                result = SYNC.configure(body)
-            elif self.path == "/api/sync/disconnect":
-                result = SYNC.disconnect()
+            elif self.path == "/api/device/reset":
+                result = SYNC.reset_identity()
             elif self.path == "/api/trajectory":
                 action = str(body.get("action", ""))
                 if action == "start":
@@ -623,8 +621,7 @@ def main() -> None:
         return
     threading.Thread(target=simulation_loop, daemon=True).start()
     threading.Thread(target=influx_loop, daemon=True).start()
-    if SYNC.credentials_path.exists():
-        print("[FIREBASE] Conexão do transmissor lembrada: reconectando automaticamente.", flush=True)
+    print(f"[FIREBASE] Identidade deste computador ({SYNC.computer}): autenticação automática.", flush=True)
     threading.Thread(target=SYNC.run_forever, daemon=True).start()
     print(f"[OK] Abra http://{HOST}:{PORT} no navegador")
     print("[INFO] Histórico: http://127.0.0.1:8765/historico")
