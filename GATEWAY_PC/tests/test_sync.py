@@ -406,6 +406,13 @@ class SyncTests(unittest.TestCase):
                           "password": "senha-correta", "remember": False})
         self.assertFalse(self.cred.exists())
 
+    def test_credential_travels_with_folder_but_never_to_git(self):
+        import subprocess
+        self.assertEqual(sync.CREDENTIALS_PATH.parent, Path(sync.__file__).resolve().parent)
+        repo = Path(sync.__file__).resolve().parents[1]
+        out = subprocess.run(["git", "check-ignore", str(sync.CREDENTIALS_PATH)], cwd=repo, capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, "transmissor.local.json precisa estar no .gitignore")
+
     def test_queue_is_bounded(self):
         old = sync.MAX_OPS
         sync.MAX_OPS = 50

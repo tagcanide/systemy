@@ -247,7 +247,7 @@
           <p class="note">Conectado como <strong id="sync-account" class="mono">—</strong>. <span id="sync-auto"></span></p>
           <button type="button" id="sync-disconnect" class="btn btn--ghost btn--block">Desconectar e esquecer</button>
         </div>
-        <p class="fine">A senha não é gravada. Com a opção marcada, o gateway guarda só o token de renovação do Firebase em %LOCALAPPDATA%\CANIDE, fora do OneDrive e do repositório, e se reconecta sozinho ao iniciar. Sem internet, a recepção e a gravação local continuam.</p>
+        <p class="fine">A senha não é gravada. Com a opção marcada, o gateway cria o arquivo transmissor.local.json nesta pasta, só com o token de renovação do Firebase. Copiada a pasta para o computador da antena, ele se conecta sozinho ao iniciar. O arquivo não vai para o repositório. Sem internet, a recepção e a gravação local continuam.</p>
         <p id="sync-message" class="msg" role="status"></p>
       </section>
       <section class="panel" aria-labelledby="h-counters">

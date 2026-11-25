@@ -798,6 +798,7 @@ function renderSync(sync, pub, source) {
  $('sync-connected').classList.toggle('hidden', !linked);
  setText($('sync-account'), sync.email || '—');
  setText($('sync-auto'), sync.remembered ? (sync.authorized ? 'Reconecta sozinho ao iniciar o gateway.' : 'Reconectando automaticamente…') : 'Conexão só até fechar o gateway.');
+ if (sync.remembered && sync.authorized) setText($('sync-auto'), 'Credencial salva em transmissor.local.json: este computador e qualquer cópia desta pasta se conectam sozinhos.');
 }
 async function trajectory(action, button) {
  if (action === 'finish' && !window.confirm('Encerrar a trajetória para todos os espectadores? A sessão não pode ser reaberta.')) return;

@@ -130,7 +130,13 @@ Desenho: a trajetória é simplificada só no desenho acima de 2.500 posições 
 
 ### Gateway (computador da antena)
 
-`GATEWAY_PC/firebase.config.json` traz os valores públicos (chave web, endereço do banco, endereço do site). No painel **Firebase · transmissor**, informe e-mail e senha e clique em **Conectar transmissor** uma única vez. Com **Manter conectado neste computador** marcado, o gateway guarda só o token de renovação do Firebase (nunca a senha) em `%LOCALAPPDATA%\CANIDE	ransmissor-firebase.json`, fora do OneDrive e do repositório, e se reconecta sozinho a cada início, inclusive se ligar sem internet (tenta de novo com espera crescente até 2 min). **Desconectar e esquecer** apaga esse arquivo. Se a conta for desativada ou a senha trocada, o token deixa de valer e o painel pede a conexão de novo. Não há variáveis de ambiente obrigatórias.
+`GATEWAY_PC/firebase.config.json` traz os valores públicos (chave web, endereço do banco, endereço do site). O computador da antena não precisa de login. A credencial é gerada uma única vez, em qualquer computador:
+
+1. Abra o painel (`127.0.0.1:8765`), seção **Firebase · transmissor**, informe e-mail e senha da conta do transmissor, deixe **Manter conectado neste computador** marcado e clique em **Conectar transmissor**.
+2. O gateway cria `GATEWAY_PC/transmissor.local.json` com o token de renovação do Firebase (a senha nunca é gravada).
+3. Leve a pasta `GATEWAY_PC` inteira para o computador da antena (OneDrive, pendrive ou zip). Ao executar `INICIAR_ECOTAM.bat`, o gateway encontra o arquivo e se conecta sozinho, inclusive se ligar sem internet (tenta de novo com espera crescente até 2 min).
+
+O arquivo está no `.gitignore` e não vai para o GitHub (repositório público); um teste automatizado garante isso. Quem tiver o arquivo pode publicar como transmissor: trate-o como uma chave. Para revogar, desative a conta em Authentication ou remova o UID de `access/transmitters`; **Desconectar e esquecer** apaga o arquivo local. Não há variáveis de ambiente obrigatórias.
 
 ### GitHub Pages
 

@@ -40,9 +40,12 @@ MAX_OPS = 120_000          # ~16 h de pontos a 1 Hz com eventos; acima disso des
 CHUNK_OPS = 400            # operações por PATCH
 HTTP_TIMEOUT = 8
 SID_FORMAT = "%Y%m%dT%H%M%SZ"
-# Conexão lembrada do transmissor: fora do repositório e fora do OneDrive.
-# Guarda o token de renovação do Firebase, nunca a senha.
-CREDENTIALS_PATH = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "CANIDE" / "transmissor-firebase.json"
+# Credencial do transmissor: token de renovação do Firebase, nunca a senha.
+# Fica na pasta do gateway para acompanhar a pasta até o computador da antena
+# (OneDrive, pendrive ou zip). O .gitignore impede que vá para o repositório público.
+CREDENTIALS_PATH = Path(__file__).resolve().parent / "transmissor.local.json"
+# Local usado pela versão anterior; ainda é lido se existir.
+LEGACY_CREDENTIALS_PATH = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "CANIDE" / "transmissor-firebase.json"
 
 # Campos compactos publicados por ponto. Só entram quando existem na amostra.
 POINT_FIELDS = (
@@ -101,6 +104,8 @@ class FirebaseSync:
                  credentials_path: Path | None = None) -> None:
         self.lock = threading.RLock()
         self.credentials_path = Path(credentials_path) if credentials_path else CREDENTIALS_PATH
+        if credentials_path is None and not self.credentials_path.exists() and LEGACY_CREDENTIALS_PATH.exists():
+            self.credentials_path = LEGACY_CREDENTIALS_PATH
         self.remembered = self.credentials_path.exists()   # a thread de envio reconecta sozinha
         self.wake = threading.Event()
         self.data_dir = Path(data_dir)
