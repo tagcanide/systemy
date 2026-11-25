@@ -7,7 +7,7 @@ uma gravação V3 já existente em dados/ (reproduzida a 1 Hz com horário atual
 são marcados como fonte simulada; nada aqui é apresentado como antena real.
 
   python tests/demo_online.py            inicia uma trajetória automaticamente
-  python tests/demo_online.py --manual   deixa o início para o painel do operador
+  python tests/demo_online.py --manual   autorização em admin.html (admin@canide.test / senha-admin) e início no painel
 
 Ctrl+C encerra. Abra o endereço do espectador em vários navegadores para ver a sincronização.
 """
@@ -85,7 +85,8 @@ def main() -> None:
     ecotam_sync.AUTH_BASE = fb + "/identitytoolkit.googleapis.com/v1"
     ecotam_sync.TOKEN_BASE = fb + "/securetoken.googleapis.com/v1"
     gateway.DADOS = tmp
-    gateway.SYNC = ecotam_sync.FirebaseSync(tmp, gateway.SESSION_ID, gateway.antenna_probe, tmp / "credenciais.json")
+    gateway.SYNC = ecotam_sync.FirebaseSync(tmp, gateway.SESSION_ID, gateway.antenna_probe, identity_path=tmp / "identidade.json",
+                                            public_config={"apiKey": "chave-demo", "databaseURL": f"{fb}/?ns={NS}"})
     gateway.FIREBASE_CONFIG = tmp / "firebase.config.json"
 
     site_dir = tmp / "site"
@@ -108,8 +109,25 @@ def main() -> None:
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read())
 
-    print(post("/api/sync/connect", {"databaseURL": f"{fb}/?ns={NS}", "apiKey": "chave-demo",
-                                     "email": "tx@canide.test", "password": "senha-correta"})["message"], flush=True)
+    # Aprovação do administrador (no site real: admin.html). Com --manual, aprove em
+    # {site}/admin.html com admin@canide.test / senha-admin usando o código do painel.
+    def status():
+        with urllib.request.urlopen(base + "/api/status", timeout=5) as r:
+            return json.loads(r.read())["sync"]["device"]
+    while status()["state"] != "pending":
+        time.sleep(0.3)
+    dev = status()
+    print(f"[demo] computador pediu autorização · código {dev['code']}", flush=True)
+    if not manual:
+        req = urllib.request.Request(f"{fb}/access/transmitters/{dev['uid']}.json?ns={NS}&auth=tok-{fake_rtdb.ADMIN_UID}",
+                                     data=json.dumps({"name": "PC demo", "approvedAt": {".sv": "timestamp"},
+                                                      "approvedBy": fake_rtdb.ADMIN_UID}).encode(), method="PUT")
+        urllib.request.urlopen(req, timeout=5).read()
+        gateway.SYNC.next_auth = 0
+        gateway.SYNC.wake.set()
+        while status()["state"] != "authorized":
+            time.sleep(0.3)
+        print("[demo] computador autorizado", flush=True)
     if not manual:
         time.sleep(2.5)
         print(post("/api/trajectory", {"action": "start", "allowSim": True})["message"], flush=True)

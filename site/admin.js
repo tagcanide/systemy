@@ -11,7 +11,10 @@ const cfg = window.CANIDE_CONFIG || {};
 const DB = String(cfg.databaseURL || '').replace(/\/+$/, '');
 const AUTH = cfg.authBase || 'https://identitytoolkit.googleapis.com/v1';
 const TOKEN = cfg.tokenBase || 'https://securetoken.googleapis.com/v1';
-const S = {uid: '', email: '', idToken: '', refreshToken: '', expiresAt: 0, timer: null, counter: 0};
+const S = {uid: '', email: '', idToken: '', refreshToken: '', expiresAt: 0, timer: null, counter: 0, sig: {}};
+/* Refaz uma lista só quando os dados mudam: o que o administrador digita não é apagado. */
+function changed(name, data) { const sig = JSON.stringify(data); if (S.sig[name] === sig) return false; S.sig[name] = sig; return true; }
+function topState(text, on) { if (!$('mode-label')) return; $('mode-label').textContent = text; $('dot').classList.toggle('on', on); }
 
 function msg(id, text, err = false) { const el = $(id); el.textContent = text; el.classList.toggle('err', err); }
 function el(tag, cls, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; }
@@ -68,7 +71,8 @@ $('login-form').addEventListener('submit', async (e) => {
 });
 function logout() {
  clearInterval(S.timer);
- Object.assign(S, {uid: '', email: '', idToken: '', refreshToken: '', expiresAt: 0, timer: null});
+ Object.assign(S, {uid: '', email: '', idToken: '', refreshToken: '', expiresAt: 0, timer: null, sig: {}});
+ topState('Sem sessão', false);
  $('admin-area').classList.add('hidden'); $('login-panel').classList.remove('hidden');
 }
 $('logout').addEventListener('click', logout);
@@ -79,9 +83,10 @@ async function load() {
   const [pairing, access, devices, auditLog] = await Promise.all([
    db('GET', 'pairing'), db('GET', 'access/transmitters'), db('GET', 'devices'),
    db('GET', 'audit', undefined).catch(() => null)]);
-  renderPending(pairing || {}, access || {});
-  renderDevices(access || {}, devices || {});
-  renderAudit(auditLog || {});
+  if (changed('pending', [pairing, Object.keys(access || {})])) renderPending(pairing || {}, access || {});
+  if (changed('devices', [access, devices])) renderDevices(access || {}, devices || {});
+  if (changed('audit', auditLog)) renderAudit(auditLog || {});
+  topState('Administrador conectado', true);
  } catch (err) { msg('admin-message', String(err.message), true); }
 }
 function renderPending(pairing, access) {
@@ -159,5 +164,6 @@ function renderAudit(log) {
 }
 
 document.body.classList.remove('is-loading');
+topState('Sem sessão', false);
 if (!DB || !cfg.apiKey) msg('login-message', 'Configuração pública do Firebase ausente neste site.', true);
 })();

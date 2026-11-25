@@ -40,14 +40,19 @@ GitHub Pages (site estático) ── celulares, tablets, notebooks ────�
 ### Estrutura no Realtime Database
 
 ```
-access/transmitters/{uid}: true          criado manualmente no console; ninguém escreve pelo app
-live                                     estado compartilhado (um único objeto pequeno)
+admins/{uid}: true                      papel de administrador (criado no console; ninguém grava pelo app)
+access/transmitters/{uid}               computadores autorizados: name, approvedAt, approvedBy, computer (só admin grava)
+pairing/{uid}                           pedidos de autorização: code, computer, requestedAt (o próprio computador grava)
+devices/{uid}                           presença do transmissor: computer, lastSeen, antenna
+audit/{chave}                           auditoria só de acréscimo: type, uid, at, computer, detail
+live                                    estado compartilhado (um único objeto pequeno)
   sessionId, status, statusAt, startedAt, source, points, lastKey, heartbeatAt
   antenna: {state: ok|stale|none|disconnected|simulated, ageS}
 sessions/{sessionId}
   info:   status, startedAt, pausedAt, resumedAt, finishedAt, source, gatewaySession
   track/{tttttttttttttt_cccccc}: n, t, seq, lat, lon, ga, ba, tc, pa, hu, sat, fix, pv
   events/{chave}: type (start|pause|resume|finish), at
+sessoes/, codigos/                      app de controle remoto do site canidé (regras preservadas)
 ```
 
 * `sessionId`: `AAAAMMDDTHHMMSSZ_xxxxxx` (UTC + aleatório).
@@ -56,15 +61,26 @@ sessions/{sessionId}
 * Campos do ponto (`t` em ms UTC, `lat`/`lon` em graus, `ga` altitude GPS, `ba` altitude barométrica, `tc` °C, `pa` Pa, `hu` %, `sat`, `fix`, `seq` do rádio, `pv` versão do protocolo) só existem quando vieram na amostra. Sem fix, não há coordenadas.
 * Precisão preservada: os valores publicados são os mesmos números gravados no CSV e no InfluxDB (verificado no teste ponta a ponta).
 
+### Autenticação automática do computador (sem login, sem arquivos)
+
+1. Ao abrir o CANIDÉ, o gateway lê a configuração pública do repositório (`firebase.config.json`: chave de API web e endereço do banco, iguais em todo computador).
+2. Na **primeira execução** naquele computador, ele cria a própria conta no Firebase Authentication (anônima, sem senha). O token de renovação fica só nele, em `%LOCALAPPDATA%\CANIDE\identidade-dispositivo.json`, cifrado com DPAPI (preso à conta Windows daquele computador; fora do OneDrive e do repositório). Cada computador tem identidade própria; uma não serve em outro.
+3. O gateway registra `pairing/{uid}` com o nome do computador e um **código de autorização** (ex.: `JERN-85GZ`) mostrado no painel local.
+4. O administrador abre `admin.html` no site, entra com a conta de administrador, confere o código e clica em **Autorizar**. A aprovação grava `access/transmitters/{uid}`.
+5. O gateway consulta a cada 10 s; ao ver a aprovação, passa a **Autorizado** e publica sozinho. Nas próximas execuções (reinício, queda de energia) ele renova o token de 1 h automaticamente e reconfere a autorização a cada minuto.
+6. **Revogar** (botão em `admin.html`) apaga `access/transmitters/{uid}`: a próxima escrita é recusada pelo servidor, o painel mostra **Revogado** e um novo pedido de autorização aparece. Para eliminar a identidade, apague também a conta em Authentication; o computador cria outra, que precisa de nova aprovação.
+7. Recuperação: o botão **Gerar nova identidade** descarta a identidade local e pede nova autorização.
+
+Autenticação do computador e detecção da antena são independentes: o painel mostra **Autorizado** mesmo sem antena; a antena aparece em `live.antenna` e em `devices/{uid}.antenna`.
+
 ### Fluxo do transmissor
 
-1. Operador conecta a conta do transmissor no painel **Firebase · transmissor** (e-mail e senha, só em memória).
-2. **Iniciar trajetória** verifica: antena com frame há menos de 5 s (ou fonte simulada com a opção de teste marcada) e amostra válida recente. Cria o `sessionId`, registra em `dados/trajetorias.jsonl`, publica `live` como *preparando*.
-3. O primeiro ponto muda o estado para *em andamento*. Cada amostra vira um ponto na fila.
-4. **Pausar**: a gravação oficial continua; o site deixa de receber pontos. **Retomar**: *retomando* até o próximo ponto. **Encerrar**: *finalizada* (pede confirmação).
-5. A cada lote (no máximo 1 por segundo em operação normal) vão juntos o batimento (`heartbeatAt`, carimbo do servidor) e o estado da antena. Sem pontos novos, o batimento vai a cada 5 s.
+1. **Iniciar trajetória** verifica: antena com frame há menos de 5 s (ou fonte simulada com a opção de teste marcada) e amostra válida recente. Cria o `sessionId`, registra em `dados/trajetorias.jsonl` e enfileira `live` como *preparando*.
+2. O primeiro ponto muda o estado para *em andamento*. Cada amostra vira um ponto na fila; a fila só é enviada com o computador autorizado.
+3. **Pausar**: a gravação oficial continua; o site deixa de receber pontos. **Retomar**: *retomando* até o próximo ponto. **Encerrar**: *finalizada*.
+4. Cada lote leva batimento (`heartbeatAt`) e estado da antena; sem pontos novos, batimento a cada 5 s. Ações do operador entram na auditoria.
 
-Se o gateway for reiniciado no meio de uma trajetória, `dados/trajetoria_ativa.json` restaura a mesma sessão. Pontos que estavam só na fila em memória nesse momento não chegam ao site (continuam no InfluxDB e no CSV).
+Se o gateway for reiniciado no meio de uma trajetória, `dados/trajetoria_ativa.json` restaura a mesma sessão.
 
 ### Fluxo do espectador
 
@@ -93,16 +109,18 @@ Perda de internet do espectador e perda de sinal da antena são estados diferent
 
 ## 3. Segurança
 
-* Regras em `firebase/database.rules.json`:
-  * leitura pública só de `live` e de `sessions/{id}` (não é possível listar sessões);
-  * escrita só por usuário autenticado cujo UID esteja em `access/transmitters` (gravado pelo console; ninguém grava pelo app);
-  * validação de formato de cada campo, enumeração de estados e chaves; campos desconhecidos são recusados.
-* O transmissor usa Firebase Authentication (e-mail e senha). A senha fica só na memória do gateway; o token é renovado automaticamente.
-* O site não contém controles, chaves privadas nem métodos de escrita (verificado em `tests/test_site.py`). A chave de API web do Firebase é pública por natureza e não dá permissão nenhuma.
-* O painel do operador só existe em `127.0.0.1:8765` e mantém a checagem de `Origin` dos POSTs.
-* O site tem Content-Security-Policy sem `unsafe-inline`, conectando só ao domínio do Realtime Database.
+| Camada | Como está protegido |
+|---|---|
+| **Criptografia em trânsito** | Todo tráfego é HTTPS/TLS: site (GitHub Pages), Authentication e Realtime Database |
+| **Criptografia em repouso** | Dados do Firebase cifrados pelo Google; identidade de cada computador cifrada com DPAPI (AES-256) no próprio computador |
+| **Credenciais** | Nenhuma senha no gateway nem no repositório; tokens de acesso de 1 h renovados automaticamente; nenhum token transportado entre computadores; token do administrador só na memória da aba |
+| **Autorização** | Regras do Realtime Database avaliadas no servidor a cada escrita: só UIDs em `access/transmitters` publicam; só `admins` autorizam, revogam e leem listas e auditoria |
+| **Auditoria** | `audit/` só aceita acréscimo, com o UID do autor verificado pelo servidor |
+| **Página de administração** | Sem segredos no código; dados de pedidos exibidos só como texto (sem HTML); CSP sem scripts externos |
 
-**Privacidade:** coordenadas exatas passam a ser visíveis para quem tiver o endereço do site durante uma sessão. O botão *Ocultar coordenadas* só afeta a tela. Se for preciso restringir o acesso, a evolução natural é exigir login (Firebase Authentication) também para leitura e trocar `".read": true` por uma lista de espectadores.
+**Não é criptografia ponta a ponta.** O Firebase precisa ler os pontos para distribuí-los, e qualquer pessoa com o endereço do site pode lê-los: a posição durante uma sessão é **pública por decisão**, para que os espectadores só abram o link. Risco: terceiros podem acompanhar o local em tempo real. Para restringir, a evolução é exigir login de espectador (Firebase Authentication) e trocar `".read": true` de `live` e `sessions` por uma lista de espectadores; o transmissor não muda.
+
+**Por que não há Cloud Functions/Admin SDK:** exigiriam o plano Blaze (pago, com cartão). A autorização de dispositivos é feita no servidor pelas regras do Firebase, com o mesmo efeito para este caso (aprovar, revogar, bloquear). Se no futuro for preciso emitir certificados ou tokens personalizados, uma Cloud Function com Admin SDK pode ser adicionada sem mudar o site.
 
 ## 4. Desempenho, limites e custos (telemetria a 1 Hz)
 
@@ -120,27 +138,15 @@ Desenho: a trajetória é simplificada só no desenho acima de 2.500 posições 
 
 ## 5. Configuração
 
-### Firebase (uma vez)
+### Firebase (uma vez, no console ou pela CLI)
 
-1. Projeto: `canide` (já existe, Realtime Database `canide-default-rtdb`).
-2. Authentication > Sign-in method: ativar **E-mail/senha**.
-3. Authentication > Users: criar a conta do transmissor (ex.: `transmissor@...`) e copiar o **UID**.
-4. Realtime Database > Dados: criar `access/transmitters/<UID>` com valor `true`.
-5. Publicar as regras: `firebase deploy --only database` na raiz do repositório (ou colar `firebase/database.rules.json` em Realtime Database > Regras).
+1. Authentication > Sign-in method: **E-mail/senha** (conta do administrador) e **Anônimo** (identidade dos computadores) ativados.
+2. Conta do administrador em Authentication; seu UID em `admins/<UID> = true` (Realtime Database > Dados).
+3. Regras publicadas: `firebase deploy --only database --project canide` na raiz do repositório.
 
-### Gateway (computador da antena)
+### Computador da antena
 
-`GATEWAY_PC/firebase.config.json` traz os valores públicos (chave web, endereço do banco, endereço do site). O computador da antena não precisa de login. A credencial é gerada uma única vez, em qualquer computador:
-
-1. Abra o painel (`127.0.0.1:8765`), seção **Firebase · transmissor**, informe e-mail e senha da conta do transmissor, deixe **Manter conectado neste computador** marcado e clique em **Conectar transmissor**.
-2. O gateway cria `GATEWAY_PC/transmissor.local.json` com o token de renovação do Firebase (a senha nunca é gravada).
-3. Leve a pasta `GATEWAY_PC` inteira para o computador da antena (OneDrive, pendrive ou zip). Ao executar `INICIAR_ECOTAM.bat`, o gateway encontra o arquivo e se conecta sozinho, inclusive se ligar sem internet (tenta de novo com espera crescente até 2 min).
-
-O arquivo está no `.gitignore` e não vai para o GitHub (repositório público); um teste automatizado garante isso.
-
-**Criptografia da credencial (DPAPI):** no primeiro início no computador da antena, o gateway cifra o arquivo com o DPAPI do Windows (AES-256, chave derivada da conta Windows e do computador, mais uma entropia própria do aplicativo) e regrava sem nenhum dado legível. Daí em diante o arquivo só funciona naquela conta, naquele computador; copiado para outro lugar, ou adulterado, é recusado. No computador onde foi gerado, o arquivo fica em texto apenas para poder viajar: transporte por pendrive e apague a cópia de origem (**Desconectar e esquecer**). Se ele passou pelo OneDrive, o histórico de versões guarda a versão em texto; nesse caso, depois de instalado, revogue e gere outra (Authentication > usuário > desativar, ou trocar a senha).
-
-O que já é cifrado sem configuração: todo o tráfego (site no GitHub Pages e Firebase só por HTTPS/TLS) e os dados do Firebase em repouso (criptografia do Google). O que é público por decisão: o site e a posição durante uma sessão, para que qualquer pessoa com o endereço acompanhe. Cifrar esse conteúdo exigiria entregar a chave a cada espectador, o que equivale a um controle de acesso por código ou login. Para revogar, desative a conta em Authentication ou remova o UID de `access/transmitters`; **Desconectar e esquecer** apaga o arquivo local. Não há variáveis de ambiente obrigatórias.
+Nenhuma configuração. Copie ou clone o projeto, execute `INICIAR_ECOTAM.bat`, aguarde o código de autorização no painel e aprove em `admin.html`. Isso acontece uma única vez por computador.
 
 ### GitHub Pages
 
@@ -166,10 +172,10 @@ python tests\demo_online.py                      # demonstração navegável sem
 
 | Sintoma no painel do operador | Causa provável |
 |---|---|
-| "E-mail ou senha do transmissor incorretos" | Conta errada ou login por e-mail/senha desativado |
-| "sem autorização de transmissor" | Falta `access/transmitters/<UID> = true` |
-| Sincronização "Escrita negada" | Regras não publicadas ou UID removido |
-| "Sem conexão · reenviando" e fila crescendo | Internet do PC ou Firebase indisponível; a gravação local continua, a fila é enviada na volta |
+| Identidade "Aguardando autorização" | Aprove o código em `admin.html` |
+| "Revogado" | O administrador revogou; aprove o novo pedido se for o caso |
+| "Sem internet" | A antena, o CSV e o InfluxDB continuam; a fila é enviada na volta |
+| "Não configurado" | `firebase.config.json` ausente ou inválido |
 | Iniciar recusado "Antena sem dados válidos recentes" | COM3 fechada ou RX sem frames há mais de 5 s |
 
 | Sintoma no site | Causa provável |

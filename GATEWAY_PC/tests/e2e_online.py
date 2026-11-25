@@ -71,7 +71,8 @@ def main() -> int:
     ecotam_sync.AUTH_BASE = fb + "/identitytoolkit.googleapis.com/v1"
     ecotam_sync.TOKEN_BASE = fb + "/securetoken.googleapis.com/v1"
     gateway.DADOS = tmp
-    gateway.SYNC = ecotam_sync.FirebaseSync(tmp, gateway.SESSION_ID, gateway.antenna_probe, tmp / "credenciais.json")
+    gateway.SYNC = ecotam_sync.FirebaseSync(tmp, gateway.SESSION_ID, gateway.antenna_probe, identity_path=tmp / "identidade.json",
+                                            public_config={"apiKey": "chave-web-publica", "databaseURL": f"{fb}/?ns={NS}"})
     web = gateway.GatewayServer(("127.0.0.1", 0), gateway.Handler)
     gateway.PORT = web.server_port
     base = f"http://127.0.0.1:{gateway.PORT}"
@@ -114,19 +115,44 @@ def main() -> int:
     code, out = post("/api/connect", {"url": f"http://127.0.0.1:{influx.server_port}", "org": "o", "bucket": "b", "token": "t"})
     check("InfluxDB (falso) conectado", code == 200, out.get("message", out.get("error", "")))
 
-    # Teste de segurança: conta autenticada sem autorização não publica.
-    code, out = post("/api/sync/connect", {"databaseURL": f"{fb}/?ns={NS}", "apiKey": "chave-web",
-                                           "email": "intruso@canide.test", "password": "senha-intruso"})
-    check("Conta sem autorização de transmissor é recusada", "sem autorização" in out.get("message", ""), out.get("message", ""))
-    anon = urllib.request.Request(f"{fb}/live.json?ns={NS}", data=b'{"status":"running"}', method="PATCH")
-    try:
-        urllib.request.urlopen(anon, timeout=5)
-        check("Escrita anônima bloqueada", False)
-    except urllib.error.HTTPError as exc:
-        check("Escrita anônima bloqueada", exc.code in (401, 403), f"HTTP {exc.code}")
-    code, out = post("/api/sync/connect", {"databaseURL": f"{fb}/?ns={NS}", "apiKey": "chave-web",
-                                           "email": "tx@canide.test", "password": "senha-correta"})
-    check("Transmissor autenticado e autorizado", code == 200 and status()["sync"]["authorized"] is True, out["message"])
+    def admin(method, path, body=None):
+        req = urllib.request.Request(f"{fb}/{path}.json?ns={NS}&auth=tok-{fake_rtdb.ADMIN_UID}",
+                                     data=None if body is None else json.dumps(body).encode(), method=method)
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.read()
+
+    def wait_device(state, timeout=30):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if status()["sync"]["device"]["state"] == state:
+                return True
+            time.sleep(0.3)
+        return False
+
+    # 1. Primeiro cadastro: o computador cria a própria identidade e pede autorização, sem login.
+    check("Primeiro cadastro: identidade criada e pedido de autorização registrado", wait_device("pending"),
+          status()["sync"]["device"]["state"])
+    dev = status()["sync"]["device"]
+    with urllib.request.urlopen(f"{fb}/__dump", timeout=5) as r:
+        req = json.loads(r.read()).get("pairing", {}).get(dev["uid"], {})
+    check("Pedido online traz o mesmo código mostrado no computador", req.get("code") == dev["code"], dev["code"])
+
+    # 12. Bloqueio de quem não está autorizado (anônimo e identidade pendente).
+    for label, token in (("anônima", ""), ("de computador pendente", f"&auth=tok-{dev['uid']}")):
+        bad = urllib.request.Request(f"{fb}/live.json?ns={NS}{token}", data=b'{"status":"running"}', method="PATCH")
+        try:
+            urllib.request.urlopen(bad, timeout=5)
+            check(f"Escrita {label} bloqueada", False)
+        except urllib.error.HTTPError as exc:
+            check(f"Escrita {label} bloqueada", exc.code in (401, 403), f"HTTP {exc.code}")
+
+    # 2-3. Autorização online pelo administrador; o gateway percebe sozinho (consulta a cada 10 s).
+    admin("PUT", f"access/transmitters/{dev['uid']}", {"name": "PC da antena", "approvedAt": {".sv": "timestamp"},
+                                                       "approvedBy": fake_rtdb.ADMIN_UID})
+    admin("DELETE", f"pairing/{dev['uid']}")
+    gateway.SYNC.next_auth = 0
+    gateway.SYNC.wake.set()
+    check("Autorização online reconhecida automaticamente", wait_device("authorized"), status()["sync"]["device"]["state"])
 
     node = ["node", "--experimental-eventsource", str(REPO / "site" / "tests" / "viewer-sim.js"), "--base", fb, "--ns", NS]
     viewers = {}
@@ -217,6 +243,22 @@ def main() -> int:
               ">".join(seq))
     check("Espectador C (entrou depois) recuperou o percurso anterior",
           reports.get("C", {}).get("keys", [None])[:1] == fb_keys[:1])
+
+    # 7. Outro computador: identidade própria, nada copiado; precisa da própria autorização.
+    other = ecotam_sync.FirebaseSync(tmp / "outro", "outro", gateway.antenna_probe, identity_path=tmp / "outro" / "identidade.json",
+                                     public_config={"apiKey": "chave-web-publica", "databaseURL": f"{fb}/?ns={NS}"})
+    check("Segundo computador recebe identidade própria e aguarda autorização",
+          other.authenticate() == "pending" and other.uid != dev["uid"], other.uid)
+
+    # 11. Revogação remota: a próxima escrita é recusada e o gateway mostra o bloqueio.
+    admin("DELETE", f"access/transmitters/{dev['uid']}")
+    post("/api/trajectory", {"action": "start", "allowSim": True})
+    check("Revogação remota bloqueia a transmissão", wait_device("revoked", 20), status()["sync"]["device"]["state"])
+    with urllib.request.urlopen(f"{fb}/__dump", timeout=5) as r:
+        after = json.loads(r.read())
+    check("Após revogar, nenhuma sessão nova chega ao site", after["live"]["sessionId"] == sid, after["live"]["sessionId"])
+    check("Auditoria registrou autenticação e trajetória",
+          {"pairing_request", "auth_ok", "trajectory_start", "trajectory_finish"} <= {a["type"] for a in after.get("audit", {}).values()})
 
     failed = [r for r in results if not r[1]]
     print(f"\n[e2e] {len(results) - len(failed)}/{len(results)} verificações aprovadas", flush=True)
