@@ -69,7 +69,9 @@ function store(key, value) {
    Cada uso aponta para o arquivo oficial previsto no manual para aquele fundo
    e tamanho mínimo (horizontal ≥ 160 px, símbolo ≥ 40 px, compacta ≥ 200 px,
    favicon para 16–32 px). */
-const BRAND = '/assets/brand/';
+// O site público (GitHub Pages) roda num subcaminho e define data-brand-base relativo.
+const BRAND = document.documentElement.dataset.brandBase || '/assets/brand/';
+const SPECTATOR = document.body.dataset.page === 'spectator';
 const BRAND_FILE = {
  logo: 'logos/01-principal-horizontal.svg', // assinatura colorida: só sobre branco
  negative: 'logos/03-negativa-branca.svg',  // branca: campo azul uniforme
@@ -91,7 +93,7 @@ function splash() {
  const el = document.createElement('div');
  el.className = 'splash';
  el.setAttribute('role', 'status');
- el.innerHTML = `${brandImg('compact', 'splash__mark', 'CANIDÉ')}<p class="splash__msg"><span class="splash__ring" aria-hidden="true"></span>Conectando ao gateway local…</p>`;
+ el.innerHTML = `${brandImg('compact', 'splash__mark', 'CANIDÉ')}<p class="splash__msg"><span class="splash__ring" aria-hidden="true"></span>${SPECTATOR ? 'Conectando ao acompanhamento…' : 'Conectando ao gateway local…'}</p>`;
  document.body.appendChild(el);
  const t0 = performance.now();
  let done = false;
@@ -115,26 +117,28 @@ const ICON = {
  host: '<path d="M2.5 4.5h11v7h-11zM5.5 14h5M8 11.5V14"/>'
 };
 const icon = (name) => `<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICON[name]}</svg>`;
-const NAV = [
- {page: 'live', href: '/', label: 'Tempo real', sections: [['h-track', 'Trajetória'], ['bme-title', 'Atmosfera'], ['gps-title', 'GPS'], ['ops-title', 'Gateway e banco']]},
+const NAV = SPECTATOR ? [
+ {page: 'spectator', icon: 'live', href: './', label: 'Acompanhar', sections: [['h-state', 'Estado'], ['h-track', 'Trajetória'], ['h-readings', 'Leituras']]}
+] : [
+ {page: 'live', href: '/', label: 'Tempo real', sections: [['h-traj', 'Trajetória online'], ['h-track', 'Plano de voo'], ['bme-title', 'Atmosfera'], ['gps-title', 'GPS'], ['ops-title', 'Gateway e banco']]},
  {page: 'history', href: '/historico', label: 'Histórico', sections: [['h-filters', 'Explorar registros'], ['h-compare', 'Comparar sessões'], ['h-table', 'Dados consultados']]},
  {page: 'quality', href: '/qualidade', label: 'Qualidade', sections: [['h-filters', 'Auditoria'], ['h-score', 'Integridade'], ['h-sessions', 'Sessões'], ['h-events', 'Eventos']]}
 ];
 function navLinks(page, withTitle) {
- return NAV.map(n => `<li><a href="${n.href}"${n.page === page ? ' aria-current="page"' : ''}${withTitle ? ` title="${n.label}"` : ''}>${icon(n.page)}<span>${n.label}</span></a></li>`).join('');
+ return NAV.map(n => `<li><a href="${n.href}"${n.page === page ? ' aria-current="page"' : ''}${withTitle ? ` title="${n.label}"` : ''}>${icon(n.icon || n.page)}<span>${n.label}</span></a></li>`).join('');
 }
 function renderShell() {
  const page = document.body.dataset.page, current = NAV.find(n => n.page === page) || NAV[0];
  const side = document.querySelector('[data-shell="sidebar"]'), top = document.querySelector('[data-shell="topbar"]'), tabs = document.querySelector('[data-shell="tabbar"]');
- if (side) side.innerHTML = `<a class="side-brand" href="/" aria-label="CANIDÉ, telemetria e rastreamento. Ir para Tempo real">${brandImg('negative', 'side-brand__logo')}<span class="side-brand__mark">${brandImg('symbol', 'brand-img')}</span><span class="side-brand__tag">Telemetria &amp; rastreamento</span></a>`
+ if (side) side.innerHTML = `<a class="side-brand" href="${NAV[0].href}" aria-label="CANIDÉ, telemetria e rastreamento. Ir para ${NAV[0].label}">${brandImg('negative', 'side-brand__logo')}<span class="side-brand__mark">${brandImg('symbol', 'brand-img')}</span><span class="side-brand__tag">Telemetria &amp; rastreamento</span></a>`
   + `<nav class="side-nav" aria-label="Navegação principal"><p class="side-label">Operação</p><ul>${navLinks(page, true)}</ul></nav>`
   + `<nav class="side-sections" aria-label="Nesta página"><p class="side-label">Nesta página</p><ul>${current.sections.filter(([id]) => $(id)).map(([id, label]) => `<li><a href="#${id}" data-section="${id}">${label}</a></li>`).join('')}</ul></nav>`
   + '<span class="side-gesture" aria-hidden="true"></span>'
-  + `<div class="side-foot"><p class="side-host" title="Gateway local">${icon('host')}<span>Gateway local · ${location.host || '127.0.0.1'}</span></p>`
+  + `<div class="side-foot"><p class="side-host" title="${SPECTATOR ? 'Acompanhamento online' : 'Gateway local'}">${icon('host')}<span>${SPECTATOR ? 'Acompanhamento online' : 'Gateway local · ' + (location.host || '127.0.0.1')}</span></p>`
   + `<button type="button" class="side-collapse" aria-pressed="false">${icon('collapse')}<span>Recolher menu</span></button></div>`;
- if (top) top.innerHTML = `<a class="top-brand" href="/" aria-label="CANIDÉ, ir para Tempo real">${brandImg('logo', 'top-brand__logo')}</a>`
+ if (top) top.innerHTML = `<a class="top-brand" href="${NAV[0].href}" aria-label="CANIDÉ, ir para ${NAV[0].label}">${brandImg('logo', 'top-brand__logo')}</a>`
   + `<p class="top-title"><span class="top-crumb">CANIDÉ</span><span class="top-sep" aria-hidden="true">/</span><strong>${current.label}</strong></p>`
-  + '<div class="link-state" title="Estado da ligação com o gateway local"><span id="dot" class="dot" aria-hidden="true"></span><span id="mode-label">Conectando…</span></div>';
+  + `<div class="link-state" title="${SPECTATOR ? 'Estado da conexão deste dispositivo' : 'Estado da ligação com o gateway local'}"><span id="dot" class="dot" aria-hidden="true"></span><span id="mode-label">Conectando…</span></div>`;
  if (tabs) tabs.innerHTML = `<ul>${navLinks(page, false)}</ul>`;
  mountBrand();
  splash();
@@ -755,9 +759,57 @@ async function refresh() {
   setText($('error-status'), [state.csv_error, state.rx_error, state.influx_error].filter(Boolean).join(' | '));
   setText($('rx-live'), state.source === 'rx' ? `${state.port} · ${state.rx_lines} linhas · ${state.rx_headers} cabeçalhos · ${state.rx_frames} frames · ${state.rx_last_age_s == null ? 'nenhum frame recebido' : `${state.rx_last_age_s} s desde o último frame`}` : 'Simulador selecionado: dados artificiais. Mude para RX/COM3 para observar os sensores.');
   if (state.influx_bucket && state.influx_bucket !== previousBucket) { previousBucket = state.influx_bucket; updateFlux(); }
+  renderSync(state.sync || {}, state.firebase_public || {}, state.source);
  } catch (err) { setOnline(false, err); }
  finally { pollBusy = false; }
 }
+
+/* Transmissão online: estado da trajetória e da fila de envio ao Firebase. */
+const TRAJ = {preparing: ['Preparando', 'blue'], running: ['Em andamento', 'olive'], paused: ['Pausada', 'yellow'], resuming: ['Retomando', 'blue'], finished: ['Finalizada', 'neutral']};
+const LINK = {off: ['Desligada · dados só no computador', ''], ok: ['Sincronizado', 'ok'], retrying: ['Sem conexão · reenviando', 'warn'], denied: ['Escrita negada', 'err']};
+let syncPrefilled = false;
+function renderSync(sync, pub, source) {
+ if (!syncPrefilled) {
+  syncPrefilled = true;
+  if (pub.databaseURL && !$('sync-db').value) $('sync-db').value = pub.databaseURL;
+  if (pub.apiKey && !$('sync-key').value) $('sync-key').value = pub.apiKey;
+ }
+ const t = sync.trajectory, status = t ? t.status : null;
+ const [label, tone] = status ? TRAJ[status] : ['Sem trajetória', ''];
+ toneTag('traj-tag', label, tone);
+ const open = !!t && status !== 'finished';
+ $('traj-start').disabled = open;
+ $('traj-pause').disabled = !open || status === 'paused';
+ $('traj-resume').disabled = status !== 'paused';
+ $('traj-finish').disabled = !open;
+ $('traj-allow-sim').closest('.check').classList.toggle('is-off', source !== 'sim');
+ setText($('traj-id'), t ? t.id : '—');
+ setText($('traj-points'), t ? `${Number(sync.sent_points || 0).toLocaleString('pt-BR')} enviados · ${Number(t.points || 0).toLocaleString('pt-BR')} na sessão` : '—');
+ setText($('traj-pending'), `${Number(sync.pending || 0).toLocaleString('pt-BR')} operações${sync.dropped ? ` · ${sync.dropped} descartadas` : ''}`);
+ const [linkText, linkState] = LINK[sync.link] || LINK.off;
+ setText($('traj-link'), sync.configured ? linkText : 'Transmissor não conectado');
+ stateClass($('traj-link'), sync.configured ? linkState : '');
+ const site = $('traj-site');
+ if (pub.publicSiteUrl) { setAttr(site, 'href', pub.publicSiteUrl); setText(site, pub.publicSiteUrl.replace(/^https:\/\//, '')); site.target = '_blank'; site.rel = 'noopener'; }
+ setText($('traj-error'), sync.error || '');
+}
+async function trajectory(action, button) {
+ if (action === 'finish' && !window.confirm('Encerrar a trajetória para todos os espectadores? A sessão não pode ser reaberta.')) return;
+ message('traj-message', '');
+ try {
+  const out = await busy(button, button.textContent, () => post('/api/trajectory', {action, allowSim: $('traj-allow-sim').checked}));
+  message('traj-message', out.message); await refresh();
+ } catch (err) { message('traj-message', String(err.message || err), true); }
+}
+for (const b of document.querySelectorAll('.traj-actions [data-action]')) b.addEventListener('click', () => trajectory(b.dataset.action, b));
+$('sync-form').addEventListener('submit', async e => {
+ e.preventDefault(); message('sync-message', 'Autenticando o transmissor…');
+ try {
+  const out = await busy($('sync-connect'), 'Conectando…', () => post('/api/sync/connect', {databaseURL: $('sync-db').value, apiKey: $('sync-key').value, email: $('sync-email').value, password: $('sync-password').value}));
+  $('sync-password').value = ''; message('sync-message', out.message);
+ } catch (err) { message('sync-message', String(err.message || err), true); }
+});
+$('sync-disconnect').addEventListener('click', async () => { try { const out = await busy($('sync-disconnect'), 'Desligando…', () => post('/api/sync/disconnect', {})); message('sync-message', out.message); } catch (err) { message('sync-message', String(err.message || err), true); } });
 
 /* Relógio de missão: apenas o relógio do navegador, sem comunicação com o gateway. */
 function tickClock() {

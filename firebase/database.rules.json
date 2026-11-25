@@ -1,0 +1,79 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "access": {
+      "transmitters": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": false
+        }
+      }
+    },
+    "live": {
+      ".read": true,
+      ".write": "auth != null && root.child('access/transmitters').child(auth.uid).val() === true",
+      ".validate": "newData.hasChildren(['sessionId', 'status'])",
+      "sessionId": { ".validate": "newData.isString() && newData.val().matches(/^[0-9]{8}T[0-9]{6}Z_[0-9a-f]{6}$/)" },
+      "status": { ".validate": "newData.isString() && newData.val().matches(/^(preparing|running|paused|resuming|finished)$/)" },
+      "statusAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+      "startedAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+      "heartbeatAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+      "source": { ".validate": "newData.isString() && newData.val().matches(/^(rx_serial|sim)$/)" },
+      "points": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+      "lastKey": { ".validate": "newData.isString() && newData.val().length <= 24" },
+      "antenna": {
+        ".validate": "newData.hasChildren(['state'])",
+        "state": { ".validate": "newData.isString() && newData.val().matches(/^(ok|stale|none|disconnected|simulated)$/)" },
+        "ageS": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+        "$other": { ".validate": false }
+      },
+      "$other": { ".validate": false }
+    },
+    "sessions": {
+      "$sid": {
+        ".read": true,
+        ".write": "auth != null && root.child('access/transmitters').child(auth.uid).val() === true",
+        ".validate": "$sid.matches(/^[0-9]{8}T[0-9]{6}Z_[0-9a-f]{6}$/)",
+        "info": {
+          "status": { ".validate": "newData.isString() && newData.val().matches(/^(preparing|running|paused|resuming|finished)$/)" },
+          "startedAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+          "pausedAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+          "resumedAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+          "finishedAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+          "source": { ".validate": "newData.isString() && newData.val().matches(/^(rx_serial|sim)$/)" },
+          "gatewaySession": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "$other": { ".validate": false }
+        },
+        "track": {
+          "$k": {
+            ".validate": "$k.matches(/^[0-9]{13}_[0-9]{6}$/) && newData.hasChildren(['n', 't'])",
+            "n": { ".validate": "newData.isNumber() && newData.val() >= 1" },
+            "t": { ".validate": "newData.isNumber()" },
+            "seq": { ".validate": "newData.isNumber()" },
+            "lat": { ".validate": "newData.isNumber() && newData.val() >= -90 && newData.val() <= 90" },
+            "lon": { ".validate": "newData.isNumber() && newData.val() >= -180 && newData.val() <= 180" },
+            "ga": { ".validate": "newData.isNumber()" },
+            "ba": { ".validate": "newData.isNumber()" },
+            "tc": { ".validate": "newData.isNumber()" },
+            "pa": { ".validate": "newData.isNumber()" },
+            "hu": { ".validate": "newData.isNumber()" },
+            "sat": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+            "pv": { ".validate": "newData.isNumber()" },
+            "fix": { ".validate": "newData.isBoolean()" },
+            "$other": { ".validate": false }
+          }
+        },
+        "events": {
+          "$k": {
+            ".validate": "$k.matches(/^[0-9]{13}_[0-9]{6}$/) && newData.hasChildren(['type', 'at'])",
+            "type": { ".validate": "newData.isString() && newData.val().matches(/^(start|pause|resume|finish)$/)" },
+            "at": { ".validate": "newData.isNumber() && newData.val() <= now" },
+            "$other": { ".validate": false }
+          }
+        },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}

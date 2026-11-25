@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-brand-base="assets/brand/">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#FFFFFF">
+  <meta name="description" content="Acompanhamento em tempo real da trajetória transmitida pela antena CANIDÉ.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' __CONNECT_SRC__; base-uri 'self'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>CANIDÉ · Acompanhar trajetória</title>
+  <link rel="icon" href="assets/brand/icons/08-favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/brand/icons/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/brand/icons/07-avatar.png">
+  <link rel="preload" href="assets/brand/fonts/OpenSans-Regular.woff" as="font" type="font/woff" crossorigin>
+  <link rel="preload" href="assets/brand/fonts/OpenSans-Bold.woff" as="font" type="font/woff" crossorigin>
+  <link rel="stylesheet" href="dashboard.css">
+  <script src="config.js" defer></script>
+  <script src="dashboard.js" defer></script>
+  <script src="sync-core.js" defer></script>
+  <script src="acompanhar.js" defer></script>
+</head>
+<body data-page="spectator" class="is-loading">
+<a class="skip-link" href="#main">Pular para o conteúdo</a>
+<div class="app">
+<div class="sidebar" data-shell="sidebar"></div>
+<div class="app-main">
+<header class="topbar" data-shell="topbar"></header>
+
+<main id="main" class="page">
+  <section class="hero" aria-labelledby="mission-title">
+    <div class="hero__copy">
+      <h1 id="mission-title" class="mission-title">Acompanhamento da trajetória</h1>
+      <p class="mission-id"><span data-greeting></span> · posição oficial transmitida pelo computador da antena</p>
+    </div>
+  </section>
+
+  <!-- Estado compartilhado: o mesmo para todos os dispositivos, vindo do transmissor. -->
+  <section id="state-panel" class="panel state-panel" aria-labelledby="h-state" data-state="syncing">
+    <span id="state-lamp" class="lamp state-panel__lamp" data-state="wait" aria-hidden="true"></span>
+    <div class="state-panel__copy">
+      <h2 id="h-state" class="state-panel__label"><span class="visually-hidden">Estado da trajetória: </span><span id="state-label">Sincronizando</span></h2>
+      <p id="state-text" class="state-panel__text">Recuperando o estado e o percurso da trajetória.</p>
+    </div>
+    <p class="state-panel__age"><span class="status-label">Última atualização</span><strong id="last-update" class="mono">—</strong></p>
+  </section>
+
+  <dl class="panel mission-bar" aria-label="Situação da transmissão">
+    <div class="status-cell"><dt>Sessão</dt><dd id="session-id" class="mono">—</dd></div>
+    <div class="status-cell"><dt>Transmissor</dt><dd id="tx-state">—</dd></div>
+    <div class="status-cell"><dt>Antena</dt><dd id="antenna-state">—</dd></div>
+    <div class="status-cell"><dt>Este dispositivo</dt><dd id="device-state">Conectando…</dd></div>
+    <div class="status-cell"><dt>Pontos recebidos</dt><dd id="points-count" class="mono">—</dd></div>
+    <div class="status-cell"><dt>Início</dt><dd id="started-at" class="mono">—</dd></div>
+  </dl>
+  <div id="sync-banner" class="banner error offline-banner hidden" role="alert"></div>
+  <p id="announcer" class="visually-hidden" aria-live="polite"></p>
+
+  <div class="deck">
+    <section class="panel hud track-panel" aria-labelledby="h-track">
+      <header class="panel__head">
+        <div><h2 id="h-track" class="deck-title">Trajetória</h2><p>Percurso completo da sessão em metros a partir da primeira posição válida (T0). Sem mapas externos.</p></div>
+        <span id="gps-status" class="tag">Aguardando</span>
+      </header>
+      <div class="chart-frame" data-sensitive><svg id="chart-track" class="chart chart--track" viewBox="0 0 900 520" role="img" aria-label="Trajetória GPS da sessão"></svg></div>
+      <div class="track-foot">
+        <p id="meta-track" class="chart-meta"></p>
+        <div class="legend" aria-hidden="true">
+          <span><i class="legend-dot tone-neutral"></i>T0 · início</span>
+          <span><i class="legend-dot tone-orange"></i>Posição atual</span>
+          <span class="alt-legend"><span id="alt-min" class="mono">—</span><i class="alt-ramp"><b></b><b></b><b></b></i><span id="alt-max" class="mono">—</span><span id="alt-source">altitude</span></span>
+        </div>
+      </div>
+      <div class="track-hud" aria-label="Posição">
+        <div class="readout tone-teal" data-sensitive><span class="readout__label">Latitude</span><strong class="readout__value"><span id="latitude">—</span><span class="readout__unit">°</span></strong></div>
+        <div class="readout tone-teal" data-sensitive><span class="readout__label">Longitude</span><strong class="readout__value"><span id="longitude">—</span><span class="readout__unit">°</span></strong></div>
+        <div class="readout tone-olive"><span class="readout__label">Altitude GPS</span><strong class="readout__value"><span id="gps-altitude">—</span><span class="readout__unit">m</span></strong></div>
+        <div class="readout tone-blue"><span class="readout__label">Distância percorrida</span><strong class="readout__value"><span id="distance">—</span><span class="readout__unit">m</span></strong></div>
+        <div class="readout tone-yellow"><span class="readout__label">Rumo calculado</span><strong class="readout__value"><span id="heading">—</span><span id="heading-unit" class="readout__unit">°</span></strong></div>
+      </div>
+    </section>
+
+    <aside class="panel hud systems" aria-labelledby="h-readings">
+      <header class="panel__head"><div><h2 id="h-readings" class="deck-title">Leituras do último ponto</h2><p id="readings-age">Valores do ponto mais recente recebido da antena.</p></div></header>
+      <ul class="sys-list readings-list">
+        <li class="sys"><span class="lamp" data-state="idle" aria-hidden="true"></span><span class="sys__name">Temperatura</span><span class="sys__value"><span id="temperature">—</span> °C</span></li>
+        <li class="sys"><span class="lamp" data-state="idle" aria-hidden="true"></span><span class="sys__name">Pressão</span><span class="sys__value"><span id="pressure">—</span> hPa</span></li>
+        <li class="sys"><span class="lamp" data-state="idle" aria-hidden="true"></span><span class="sys__name">Umidade</span><span class="sys__value"><span id="humidity">—</span> % UR</span></li>
+        <li class="sys"><span class="lamp" data-state="idle" aria-hidden="true"></span><span class="sys__name">Altitude barométrica</span><span class="sys__value"><span id="altitude">—</span> m</span></li>
+        <li class="sys"><span class="lamp" data-state="idle" aria-hidden="true"></span><span class="sys__name">Satélites</span><span class="sys__value" id="satellites">—</span></li>
+        <li class="sys"><span class="lamp" data-state="idle" aria-hidden="true"></span><span class="sys__name">Fix GPS</span><span class="sys__value" id="fix-state">—</span></li>
+        <li class="sys"><span class="lamp" data-state="idle" aria-hidden="true"></span><span class="sys__name">Velocidade</span><span class="sys__value">Não transmitida</span></li>
+      </ul>
+      <p class="fine">A velocidade não faz parte do protocolo V3 da antena. Distância e rumo são calculados a partir das posições recebidas, sem interpolação.</p>
+      <div class="live-toolbar spectator-toolbar">
+        <button type="button" id="follow" class="btn btn--ghost" aria-pressed="true"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.25"/><path d="M8 1.5v2.5M8 12v2.5M1.5 8H4M12 8h2.5"/></svg>Vista automática</button>
+        <button type="button" id="mask-coords" class="btn btn--ghost" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8Z M8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>Ocultar coordenadas</button>
+      </div>
+    </aside>
+  </div>
+
+  <section class="section" aria-labelledby="series-title">
+    <div class="section-title">
+      <div class="section-title__id"><div><h2 id="series-title">Séries da sessão</h2><p>Últimos 300 pontos da trajetória, na ordem em que foram registrados.</p></div></div>
+    </div>
+    <div class="chart-grid">
+      <article class="panel chart-panel channel tone-olive" aria-labelledby="h-alt">
+        <header class="channel__head"><div><h3 id="h-alt">Altitude</h3><p>GPS e barométrica · metros</p></div></header>
+        <div class="chart-frame"><svg id="chart-altitude" class="chart" viewBox="0 0 640 240" role="img" aria-label="Altitude ao longo da sessão"></svg></div>
+        <div class="legend" aria-hidden="true"><span><i class="legend-dot tone-olive"></i>GPS</span><span><i class="legend-dot tone-blue"></i>Barométrica</span></div>
+      </article>
+      <article class="panel chart-panel channel tone-orange" aria-labelledby="h-temp">
+        <header class="channel__head"><div><h3 id="h-temp">Temperatura</h3><p>BME280 · graus Celsius</p></div></header>
+        <div class="chart-frame"><svg id="chart-temperature" class="chart" viewBox="0 0 640 240" role="img" aria-label="Temperatura ao longo da sessão"></svg></div>
+      </article>
+    </div>
+  </section>
+</main>
+<footer class="app-footer"><span class="app-footer__brand"><img src="assets/brand/logos/05-simbolo.svg" alt="" width="40" height="40"><span><b>CANIDÉ</b> · Telemetria &amp; rastreamento<em class="app-footer__slogan">Cabe outro olhar.</em></span></span><span>Somente leitura · o controle da trajetória fica no computador da antena</span></footer>
+</div>
+</div>
+<nav class="tabbar" data-shell="tabbar" aria-label="Navegação principal"></nav>
+</body>
+</html>

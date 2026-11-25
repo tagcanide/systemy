@@ -29,9 +29,9 @@
 /* ==========================================================================
    0. Fontes oficiais
    ========================================================================== */
-@font-face { font-family: "Open Sans"; src: url("/assets/brand/fonts/OpenSans-Regular.woff") format("woff"); font-weight: 400; font-style: normal; font-display: swap; }
-@font-face { font-family: "Open Sans"; src: url("/assets/brand/fonts/OpenSans-Bold.woff") format("woff"); font-weight: 700; font-style: normal; font-display: swap; }
-@font-face { font-family: "Noto Serif"; src: url("/assets/brand/fonts/NotoSerif-Regular.woff") format("woff"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Open Sans"; src: url("./assets/brand/fonts/OpenSans-Regular.woff") format("woff"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Open Sans"; src: url("./assets/brand/fonts/OpenSans-Bold.woff") format("woff"); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: "Noto Serif"; src: url("./assets/brand/fonts/NotoSerif-Regular.woff") format("woff"); font-weight: 400; font-style: normal; font-display: swap; }
 
 /* ==========================================================================
    1. Tokens
@@ -115,10 +115,10 @@
   --tab-h: 64px;
 
   /* Arquivos oficiais do kit */
-  --brand-symbol: url("/assets/brand/logos/05-simbolo.svg");
-  --brand-favicon: url("/assets/brand/icons/08-favicon.svg");
-  --brand-arcs: url("/assets/brand/patterns/arcos-da-face.svg");
-  --brand-pattern: url("/assets/brand/patterns/padrao.svg");
+  --brand-symbol: url("./assets/brand/logos/05-simbolo.svg");
+  --brand-favicon: url("./assets/brand/icons/08-favicon.svg");
+  --brand-arcs: url("./assets/brand/patterns/arcos-da-face.svg");
+  --brand-pattern: url("./assets/brand/patterns/padrao.svg");
 }
 
 /* ==========================================================================
@@ -936,4 +936,56 @@ body.mask-coords [data-sensitive].readout .readout__value { filter: blur(7px); u
   .chart .last-pulse, .chart .ripple, .chart .radar-sweep { display: none; }
   .splash__mark { animation: none; }
   ::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+}
+
+/* ==========================================================================
+   16. Transmissão online: controles do operador (Tempo real) e estado
+       compartilhado do espectador (site público). Mesmos tokens e cores chapadas.
+   ========================================================================== */
+.traj-panel { margin-top: var(--gap); }
+.traj-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: var(--gap); align-items: start; }
+.traj-actions > .btn { flex: 1 1 120px; }
+/* Botões indisponíveis pelo estado da trajetória: apagados, sem o indicador de "em andamento". */
+.traj-actions .btn[disabled] { opacity: .45; cursor: not-allowed; }
+.traj-actions .btn[disabled]::before { content: none; }
+.check { display: flex; align-items: center; gap: 10px; min-height: 44px; margin-top: 8px; font-size: 13.5px; color: var(--ink-2); cursor: pointer; }
+.check input { width: 18px; height: 18px; margin: 0; accent-color: var(--c-blue); flex: none; }
+.check.is-off { display: none; }
+.traj-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin: 0; background: var(--stroke); border: 1px solid var(--stroke); border-radius: var(--r-sm); overflow: hidden; }
+.traj-facts > div { background: var(--sunken); padding: 10px 12px; min-width: 0; }
+.traj-facts__wide { grid-column: 1 / -1; }
+.traj-facts dt { font-size: 12.5px; color: var(--ink-3); }
+.traj-facts dd { margin: 4px 0 0; font-size: 14px; font-weight: 700; color: var(--ink); overflow-wrap: anywhere; }
+.traj-facts a { color: var(--c-blue); text-underline-offset: 3px; }
+
+/* Espectador: o estado é a primeira informação da página. */
+.state-panel { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px 18px; margin-top: var(--gap); padding: 20px 22px; }
+.state-panel__lamp { width: 16px; height: 16px; }
+.state-panel__label { font-size: clamp(22px, 2.6vw, 30px); font-weight: 700; line-height: 1.15; letter-spacing: -.01em; }
+.state-panel__text { margin-top: 6px; color: var(--ink-2); font-size: 14.5px; line-height: 1.5; max-width: 72ch; }
+.state-panel__age { text-align: right; }
+.state-panel__age strong { display: block; margin-top: 4px; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.spectator-toolbar { margin-top: auto; padding-top: 14px; }
+.spectator-toolbar .btn { flex: 1 1 auto; }
+.readings-list .sys__value { white-space: nowrap; }
+/* Posição que não é atual (antena sem sinal, transmissor calado, pausa, fim): marcador neutro, sem pulso. */
+.chart.is-stale .series { --tone: var(--ink-3); }
+.chart.is-stale .reticle { stroke: var(--ink-3); }
+.chart.is-stale .ripple { display: none; }
+/* Uma única página pública: sem barra de abas no celular. */
+body[data-page="spectator"] .tabbar { display: none !important; }
+
+@media (max-width: 900px) {
+  .traj-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  body[data-page="spectator"] .page { padding-bottom: 40px; }
+  body[data-page="spectator"] .app-footer { padding-bottom: calc(28px + env(safe-area-inset-bottom)); }
+  .state-panel { grid-template-columns: auto minmax(0, 1fr); padding: 16px; }
+  .state-panel__lamp { align-self: start; margin-top: 8px; }
+  .state-panel__age { grid-column: 1 / -1; text-align: left; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding-top: 12px; border-top: 1px solid var(--stroke); }
+  .state-panel__age strong { margin-top: 0; }
+}
+@media (max-width: 560px) {
+  .traj-facts { grid-template-columns: 1fr; }
 }

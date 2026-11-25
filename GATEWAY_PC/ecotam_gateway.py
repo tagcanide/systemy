@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ECOTAM PC Gateway Sprint 13 - telemetria, histórico e qualidade, InfluxDB v2.
+"""ECOTAM PC Gateway - telemetria, histórico, qualidade (InfluxDB v2) e transmissão online.
 
 Uses only Python's standard library for demo and InfluxDB. Optional pyserial
 supports existing ECOTAM RX V2 diagnostic output when the radio is working.
@@ -24,6 +24,7 @@ import sys
 
 import ecotam_history
 import ecotam_quality
+import ecotam_sync
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -75,6 +76,38 @@ class AppState:
 
 
 STATE = AppState()
+FIREBASE_CONFIG = ROOT / "firebase.config.json"
+
+
+def antenna_probe() -> dict[str, Any]:
+    """Estado da recepção para a transmissão online. Antena (RX) e internet são coisas distintas."""
+    with STATE.lock:
+        source = "rx_serial" if STATE.source == "rx" else "sim"
+        last = next((s for s in reversed(STATE.samples) if s.get("source") == source), None)
+        has_sample = last is not None and time.time() * 1000 - last["timestamp_ms"] < 5000
+        if source == "sim":
+            return {"source": "sim", "state": "simulated", "ageS": None, "hasSample": has_sample}
+        age = (time.monotonic() - STATE.rx_last_frame_time) if STATE.rx_last_frame_time is not None else None
+        port_open = STATE.rx_serial is not None and getattr(STATE.rx_serial, "is_open", False)
+        if not port_open:
+            state = "disconnected"
+        elif age is None:
+            state = "none"
+        else:
+            state = "ok" if age < ecotam_sync.ANTENNA_STALE_S else "stale"
+        return {"source": source, "state": state, "ageS": age, "hasSample": has_sample}
+
+
+SYNC = ecotam_sync.FirebaseSync(DADOS, SESSION_ID, antenna_probe)
+
+
+def public_firebase_config() -> dict[str, str]:
+    """Valores públicos (chave de API web, endereço do banco, site). Nunca contém senha."""
+    try:
+        data = json.loads(FIREBASE_CONFIG.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {k: str(data[k]) for k in ("apiKey", "databaseURL", "publicSiteUrl") if isinstance(data.get(k), str)}
 
 
 def build_simulated_sample(sequence: int) -> dict[str, Any]:
@@ -123,6 +156,11 @@ def save_sample(sample: dict[str, Any]) -> None:
                 STATE.pending.put_nowait(record)
             except queue.Full:
                 STATE.queue_drops += 1
+        # Só enfileira em memória: o envio ao Firebase acontece em outra thread.
+        try:
+            SYNC.on_sample(record)
+        except Exception as exc:  # a sincronização nunca interrompe a gravação local
+            STATE.csv_error = STATE.csv_error or f"Falha na fila de sincronização: {exc}"
 
 
 def simulation_loop() -> None:
@@ -432,11 +470,13 @@ def snapshot() -> dict[str, Any]:
             "rx_last_line": STATE.rx_last_line,
             "rx_last_age_s": (round(time.monotonic() - STATE.rx_last_frame_time, 1)
                               if STATE.rx_last_frame_time is not None else None),
+            "sync": SYNC.status(),
+            "firebase_public": public_firebase_config(),
         }
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ECOTAM-Gateway/17.1"
+    server_version = "ECOTAM-Gateway/18"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         if not self.path.startswith("/api/status"):
@@ -516,6 +556,22 @@ class Handler(BaseHTTPRequestHandler):
                 with STATE.lock:
                     cfg = STATE.config.copy() if STATE.config else None
                 result = ecotam_quality.quality_result(cfg, body)
+            elif self.path == "/api/sync/connect":
+                result = SYNC.configure(body)
+            elif self.path == "/api/sync/disconnect":
+                result = SYNC.disconnect()
+            elif self.path == "/api/trajectory":
+                action = str(body.get("action", ""))
+                if action == "start":
+                    result = SYNC.start(allow_sim=body.get("allowSim") is True)
+                elif action == "pause":
+                    result = SYNC.pause()
+                elif action == "resume":
+                    result = SYNC.resume()
+                elif action == "finish":
+                    result = SYNC.finish()
+                else:
+                    raise ValueError("Ação de trajetória inválida")
             else:
                 return self._json(404, {"error": "Não encontrado"})
             self._json(200, result)
@@ -543,7 +599,7 @@ class GatewayServer(ThreadingHTTPServer):
 
 def main() -> None:
     print("=" * 56)
-    print(" ECOTAM | SPRINT 17.1 | DASHBOARD BME280 + GPS")
+    print(" ECOTAM | SPRINT 18 | TELEMETRIA ONLINE (FIREBASE)")
     print(" Fonte inicial: sim. Para sensores reais, selecione RX / COM3.")
     print(" CSV local automático. Token só fica na memória do processo.")
     print("=" * 56)
@@ -567,6 +623,7 @@ def main() -> None:
         return
     threading.Thread(target=simulation_loop, daemon=True).start()
     threading.Thread(target=influx_loop, daemon=True).start()
+    threading.Thread(target=SYNC.run_forever, daemon=True).start()
     print(f"[OK] Abra http://{HOST}:{PORT} no navegador")
     print("[INFO] Histórico: http://127.0.0.1:8765/historico")
     print("[INFO] Qualidade: http://127.0.0.1:8765/qualidade")

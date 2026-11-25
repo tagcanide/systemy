@@ -1,0 +1,6 @@
+{
+  "_comment": "Valores públicos do app web Firebase (não são segredos). A senha do transmissor nunca fica aqui.",
+  "apiKey": "AIzaSyCJDyPgeJFnYEwzcHWKUvNunu8Hm8zvxLY",
+  "databaseURL": "https://canide-default-rtdb.firebaseio.com",
+  "publicSiteUrl": "https://tagcanide.github.io/systemy/"
+}

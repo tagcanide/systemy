@@ -68,6 +68,34 @@
   <div id="offline-banner" class="banner error offline-banner hidden" role="alert">Gateway offline. Os últimos valores continuam na tela; nova tentativa a cada segundo.</div>
   <p id="announcer" class="visually-hidden" aria-live="polite"></p>
 
+  <!-- Transmissão online: só existe neste computador (127.0.0.1). O site público não tem estes controles. -->
+  <section class="panel traj-panel" id="traj-panel" aria-labelledby="h-traj">
+    <header class="panel__head">
+      <div><h2 id="h-traj" class="deck-title">Trajetória online</h2><p>Este computador é o transmissor oficial. Ao iniciar, todos os dispositivos abertos no site passam a acompanhar a mesma sessão.</p></div>
+      <span id="traj-tag" class="tag">Sem trajetória</span>
+    </header>
+    <div class="traj-grid">
+      <div class="traj-controls">
+        <div class="btn-row traj-actions">
+          <button type="button" class="btn" id="traj-start" data-action="start">Iniciar trajetória</button>
+          <button type="button" class="btn btn--ghost" id="traj-pause" data-action="pause">Pausar</button>
+          <button type="button" class="btn btn--ghost" id="traj-resume" data-action="resume">Retomar</button>
+          <button type="button" class="btn btn--ghost" id="traj-finish" data-action="finish">Encerrar</button>
+        </div>
+        <label class="check" for="traj-allow-sim"><input type="checkbox" id="traj-allow-sim"><span>Permitir iniciar com dados simulados, somente para teste</span></label>
+        <p id="traj-message" class="msg" role="status"></p>
+      </div>
+      <dl class="traj-facts">
+        <div><dt>Sessão</dt><dd id="traj-id" class="mono">—</dd></div>
+        <div><dt>Pontos publicados</dt><dd id="traj-points" class="mono">—</dd></div>
+        <div><dt>Fila de envio</dt><dd id="traj-pending" class="mono">—</dd></div>
+        <div><dt>Sincronização</dt><dd id="traj-link">—</dd></div>
+        <div class="traj-facts__wide"><dt>Site público</dt><dd><a id="traj-site" href="#sync-panel">Configure o transmissor</a></dd></div>
+      </dl>
+    </div>
+    <p id="traj-error" class="error" role="alert"></p>
+  </section>
+
   <!-- Deck principal: trajetória protagonista + subsistemas. -->
   <div class="deck">
     <section class="panel hud track-panel" aria-labelledby="h-track">
@@ -204,6 +232,18 @@
         </form>
         <p class="fine">O token fica somente na memória do gateway; endereço restrito a localhost.</p>
         <p id="connect-message" class="msg" role="status"></p>
+      </section>
+      <section class="panel" id="sync-panel" aria-labelledby="h-sync">
+        <header class="panel__head"><div><h3 id="h-sync">Firebase · transmissor</h3><p>Conta autorizada a publicar a trajetória</p></div></header>
+        <form id="sync-form" autocomplete="off">
+          <div class="field"><label for="sync-db">Realtime Database</label><input id="sync-db" name="sync-db" type="url" class="input mono" required placeholder="https://projeto-default-rtdb.firebaseio.com" spellcheck="false"></div>
+          <div class="field"><label for="sync-key">Chave de API web</label><input id="sync-key" name="sync-key" class="input mono" required spellcheck="false" placeholder="Chave pública do app web…"></div>
+          <div class="field"><label for="sync-email">E-mail do transmissor</label><input id="sync-email" name="sync-email" type="email" class="input" required autocomplete="username" spellcheck="false" placeholder="transmissor@…"></div>
+          <div class="field"><label for="sync-password">Senha</label><input id="sync-password" name="sync-password" type="password" class="input" required autocomplete="current-password" placeholder="Senha da conta do transmissor…"></div>
+          <div class="btn-row"><button type="submit" id="sync-connect" class="btn btn--block">Conectar transmissor</button><button type="button" id="sync-disconnect" class="btn btn--ghost btn--block">Desligar</button></div>
+        </form>
+        <p class="fine">A senha fica só na memória do gateway. A chave de API web é pública; a proteção vem da conta autorizada e das regras do banco. Sem internet, a recepção e a gravação local continuam.</p>
+        <p id="sync-message" class="msg" role="status"></p>
       </section>
       <section class="panel" aria-labelledby="h-counters">
         <header class="panel__head"><div><h3 id="h-counters">Recepção e persistência</h3><p>Contadores desta execução do gateway</p></div></header>

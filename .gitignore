@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+_site/
+# Estado local da trajetória e diário de sessões (dados do computador da antena)
+GATEWAY_PC/dados/trajetoria_ativa.json
+GATEWAY_PC/dados/trajetoria_ativa.tmp
+GATEWAY_PC/dados/trajetorias.jsonl
+# Novas gravações de telemetria não vão para o repositório público (coordenadas são sensíveis)
+GATEWAY_PC/dados/*.csv
+# Credenciais e arquivos locais
+.env
+.env.*
+*.local.json
+service-account*.json
+.firebase/
+firebase-debug.log
+database-debug.log
+GATEWAY_PC/.impeccable/
