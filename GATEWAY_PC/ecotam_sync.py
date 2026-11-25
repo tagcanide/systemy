@@ -28,6 +28,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Callable
 
+import ecotam_secret
+
 AUTH_BASE = "https://identitytoolkit.googleapis.com/v1"
 TOKEN_BASE = "https://securetoken.googleapis.com/v1"
 # Emulador local do Firebase (testes). Em produção só HTTPS do Firebase é aceito.
@@ -107,6 +109,7 @@ class FirebaseSync:
         if credentials_path is None and not self.credentials_path.exists() and LEGACY_CREDENTIALS_PATH.exists():
             self.credentials_path = LEGACY_CREDENTIALS_PATH
         self.remembered = self.credentials_path.exists()   # a thread de envio reconecta sozinha
+        self.protected = False
         self.wake = threading.Event()
         self.data_dir = Path(data_dir)
         self.gateway_session = gateway_session
@@ -240,19 +243,25 @@ class FirebaseSync:
             return json.loads(raw.decode("utf-8")) if raw else None
 
     # ------------------------------------------------------------ conexão lembrada
-    def _save_credentials(self) -> None:
+    def _save_credentials(self, transport: bool = False) -> None:
+        """transport=True: arquivo em texto para levar ao computador da antena (gerado no painel).
+        transport=False: arquivo cifrado com DPAPI, preso à conta Windows deste computador."""
         cfg = self.cfg
         if cfg is None or not self.refresh_token:
             return
         doc = {"apiKey": cfg["apiKey"], "databaseURL": cfg["databaseURL"], "email": cfg["email"],
-               "uid": self.uid, "refreshToken": self.refresh_token}
+               "uid": self.uid, "refreshToken": self.refresh_token, "origin": ecotam_secret.this_computer()}
+        payload: dict[str, Any] = doc
+        if not transport and ecotam_secret.available():
+            payload = ecotam_secret.protect(json.dumps(doc).encode("utf-8"))
         try:
             self.credentials_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.credentials_path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(doc), encoding="utf-8")
+            tmp.write_text(json.dumps(payload), encoding="utf-8")
             tmp.replace(self.credentials_path)
             self.remembered = True
-        except OSError as exc:
+            self.protected = payload is not doc
+        except (OSError, ValueError) as exc:
             self.last_error = f"Conectado, mas não foi possível lembrar a conexão neste computador: {exc}"
 
     def _forget_credentials(self) -> None:
@@ -265,16 +274,19 @@ class FirebaseSync:
     def auto_connect(self) -> bool:
         """Reconecta com a conexão lembrada. True quando conectou e está autorizado."""
         try:
-            doc = json.loads(self.credentials_path.read_text(encoding="utf-8"))
+            stored = json.loads(self.credentials_path.read_text(encoding="utf-8"))
+            was_protected = stored.get("format") == ecotam_secret.FORMAT
+            doc = json.loads(ecotam_secret.unprotect(stored)) if was_protected else stored
             base, query = normalize_database_url(doc["databaseURL"])
             api_key, refresh, email = str(doc["apiKey"]), str(doc["refreshToken"]), str(doc["email"])
         except FileNotFoundError:
             return False
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError) as exc:
             with self.lock:
-                self.last_error = "A conexão lembrada está inválida. Conecte o transmissor novamente."
-            self._forget_credentials()
-            return False
+                self.last_error = (str(exc) if "outro computador" in str(exc)
+                                   else "A conexão lembrada está inválida. Conecte o transmissor novamente.")
+                self.remembered = False
+            return False   # o arquivo é mantido: pode ser de outro computador
         with self.lock:
             self.cfg = {"apiKey": api_key, "base": base, "query": query, "databaseURL": doc["databaseURL"], "email": email}
             self.refresh_token = refresh
@@ -307,7 +319,10 @@ class FirebaseSync:
             self.link = "ok" if self.authorized else "denied"
             self.last_error = "" if self.authorized else (
                 f"Conta sem autorização de transmissor. Adicione access/transmitters/{self.uid} = true no Realtime Database.")
-            self._save_credentials()   # o token de renovação pode ter mudado
+            # Arquivo trazido de outro computador: cifra com DPAPI aqui e some o texto puro.
+            # No computador que gerou o arquivo (transporte), ele continua em texto para poder viajar.
+            in_transport = not was_protected and doc.get("origin") == ecotam_secret.this_computer()
+            self._save_credentials(transport=in_transport)
         self.wake.set()
         return bool(self.authorized)
 
@@ -344,7 +359,7 @@ class FirebaseSync:
             return {"message": self.last_error}
         if data.get("remember", True) is not False:
             with self.lock:
-                self._save_credentials()
+                self._save_credentials(transport=True)
             return {"message": "Transmissor conectado e lembrado neste computador. Nas próximas vezes o gateway se conecta sozinho."}
         self._forget_credentials()
         return {"message": "Transmissor autenticado e autorizado. A trajetória será publicada no site."}
@@ -599,6 +614,7 @@ class FirebaseSync:
                 "configured": self.cfg is not None,
                 "authorized": self.authorized,
                 "remembered": self.remembered,
+                "protected": self.protected,
                 "link": self.link,
                 "uid": self.uid,
                 "database_url": self.cfg["databaseURL"] if self.cfg else "",

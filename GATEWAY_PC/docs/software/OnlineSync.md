@@ -136,7 +136,11 @@ Desenho: a trajetória é simplificada só no desenho acima de 2.500 posições 
 2. O gateway cria `GATEWAY_PC/transmissor.local.json` com o token de renovação do Firebase (a senha nunca é gravada).
 3. Leve a pasta `GATEWAY_PC` inteira para o computador da antena (OneDrive, pendrive ou zip). Ao executar `INICIAR_ECOTAM.bat`, o gateway encontra o arquivo e se conecta sozinho, inclusive se ligar sem internet (tenta de novo com espera crescente até 2 min).
 
-O arquivo está no `.gitignore` e não vai para o GitHub (repositório público); um teste automatizado garante isso. Quem tiver o arquivo pode publicar como transmissor: trate-o como uma chave. Para revogar, desative a conta em Authentication ou remova o UID de `access/transmitters`; **Desconectar e esquecer** apaga o arquivo local. Não há variáveis de ambiente obrigatórias.
+O arquivo está no `.gitignore` e não vai para o GitHub (repositório público); um teste automatizado garante isso.
+
+**Criptografia da credencial (DPAPI):** no primeiro início no computador da antena, o gateway cifra o arquivo com o DPAPI do Windows (AES-256, chave derivada da conta Windows e do computador, mais uma entropia própria do aplicativo) e regrava sem nenhum dado legível. Daí em diante o arquivo só funciona naquela conta, naquele computador; copiado para outro lugar, ou adulterado, é recusado. No computador onde foi gerado, o arquivo fica em texto apenas para poder viajar: transporte por pendrive e apague a cópia de origem (**Desconectar e esquecer**). Se ele passou pelo OneDrive, o histórico de versões guarda a versão em texto; nesse caso, depois de instalado, revogue e gere outra (Authentication > usuário > desativar, ou trocar a senha).
+
+O que já é cifrado sem configuração: todo o tráfego (site no GitHub Pages e Firebase só por HTTPS/TLS) e os dados do Firebase em repouso (criptografia do Google). O que é público por decisão: o site e a posição durante uma sessão, para que qualquer pessoa com o endereço acompanhe. Cifrar esse conteúdo exigiria entregar a chave a cada espectador, o que equivale a um controle de acesso por código ou login. Para revogar, desative a conta em Authentication ou remova o UID de `access/transmitters`; **Desconectar e esquecer** apaga o arquivo local. Não há variáveis de ambiente obrigatórias.
 
 ### GitHub Pages
 

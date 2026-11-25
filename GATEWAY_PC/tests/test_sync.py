@@ -406,6 +406,33 @@ class SyncTests(unittest.TestCase):
                           "password": "senha-correta", "remember": False})
         self.assertFalse(self.cred.exists())
 
+    @unittest.skipUnless(sys.platform == "win32", "DPAPI só no Windows")
+    def test_credential_from_other_pc_is_encrypted_on_first_start(self):
+        import ecotam_secret
+        self.connect()                                  # gerada aqui: arquivo de transporte
+        doc = json.loads(self.cred.read_text(encoding="utf-8"))
+        self.assertEqual(doc["origin"], ecotam_secret.this_computer())
+        doc["origin"] = "PC-ONDE-FOI-GERADA"            # simula a chegada no PC da antena
+        self.cred.write_text(json.dumps(doc), encoding="utf-8")
+        antenna = sync.FirebaseSync(Path(self.tmp.name), "x", lambda: dict(self.antenna), self.cred)
+        self.assertTrue(antenna.auto_connect())
+        stored = self.cred.read_text(encoding="utf-8")
+        self.assertEqual(json.loads(stored)["format"], "dpapi-v1")
+        for secret in ("ref-", "refreshToken", "chave-web", "tx@canide.test"):
+            self.assertNotIn(secret, stored)           # nada legível no disco
+        self.assertTrue(antenna.status()["protected"])
+        again = sync.FirebaseSync(Path(self.tmp.name), "y", lambda: dict(self.antenna), self.cred)
+        self.assertTrue(again.auto_connect())          # continua conectando sozinho
+
+    @unittest.skipUnless(sys.platform == "win32", "DPAPI só no Windows")
+    def test_tampered_or_foreign_protected_credential_is_refused(self):
+        self.connect()
+        self.cred.write_text(json.dumps({"format": "dpapi-v1", "data": "QUFBQUFBQUFBQUFBQUFBQQ=="}), encoding="utf-8")
+        other = sync.FirebaseSync(Path(self.tmp.name), "x", lambda: dict(self.antenna), self.cred)
+        self.assertFalse(other.auto_connect())
+        self.assertIn("outro computador", other.status()["error"])
+        self.assertTrue(self.cred.exists())            # não apaga: pode ser de outra conta legítima
+
     def test_credential_travels_with_folder_but_never_to_git(self):
         import subprocess
         self.assertEqual(sync.CREDENTIALS_PATH.parent, Path(sync.__file__).resolve().parent)

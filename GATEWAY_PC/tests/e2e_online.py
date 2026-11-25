@@ -126,7 +126,7 @@ def main() -> int:
         check("Escrita anônima bloqueada", exc.code in (401, 403), f"HTTP {exc.code}")
     code, out = post("/api/sync/connect", {"databaseURL": f"{fb}/?ns={NS}", "apiKey": "chave-web",
                                            "email": "tx@canide.test", "password": "senha-correta"})
-    check("Transmissor autenticado e autorizado", code == 200 and "autorizado" in out["message"], out["message"])
+    check("Transmissor autenticado e autorizado", code == 200 and status()["sync"]["authorized"] is True, out["message"])
 
     node = ["node", "--experimental-eventsource", str(REPO / "site" / "tests" / "viewer-sim.js"), "--base", fb, "--ns", NS]
     viewers = {}
